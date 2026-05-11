@@ -61,7 +61,9 @@ typedef struct {
     uint64_t start_time_us;
 } nsr_omni_state_t;
 
-void nsr_omni_gatekeeper_main(int logic_to_gate_fd, int gate_to_logic_fd, const char *target);
-void nsr_omni_logic_main(int gate_to_logic_fd, int logic_to_gate_fd, int logic_to_tui_fd);
+#include <nsr/shm_ring.h>
+
+void nsr_omni_gatekeeper_omega(nsr_shm_ring_t *l2g, nsr_shm_ring_t *g2l, const char *target);
+void nsr_omni_logic_omega(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, int l2t_fd);
 
 #endif

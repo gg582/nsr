@@ -12,6 +12,8 @@
 #include <stdio.h>
 #include <poll.h>
 #include <fcntl.h>
+#include <signal.h>
+#include <errno.h>
 
 static nsr_omni_state_t g_state;
 
@@ -32,58 +34,46 @@ static uint64_t compute_integrity(uint8_t ttl, uint16_t seq) {
     return ttak_siphash24_u64(val, NSR_INTEGRITY_KEY0, NSR_INTEGRITY_KEY1);
 }
 
-void nsr_omni_logic_main(int gate_to_logic_fd, int logic_to_gate_fd, int logic_to_tui_fd) {
+void nsr_omni_logic_omega(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, int logic_to_tui_fd) {
     memset(&g_state, 0, sizeof(g_state));
     g_state.start_time_us = ttak_get_tick_count_ns() / 1000;
     
     uint8_t current_ttl = 1;
     uint16_t current_seq = 0;
-    uint32_t probes_sent = 0;
-
-    // Set non-blocking
-    fcntl(gate_to_logic_fd, F_SETFL, O_NONBLOCK);
-
-    struct pollfd fds[1];
-    fds[0].fd = gate_to_logic_fd;
-    fds[0].events = POLLIN;
 
     while (1) {
-        // [1] EMIT PROBE INTENT
-        nsr_intent_t intent = {
-            .ttl = current_ttl,
-            .seq = current_seq,
-            .action = 0, // PROBE
-            .timestamp_us = ttak_get_tick_count_ns() / 1000,
-            .integrity = compute_integrity(current_ttl, current_seq)
-        };
+        // [1] EMIT PROBE INTENT (Batching to SHM)
+        #define LOGIC_BATCH 32
+        nsr_intent_t intents[LOGIC_BATCH];
+        uint64_t now_us = ttak_get_tick_count_ns() / 1000;
+        for (int i = 0; i < LOGIC_BATCH; i++) {
+            intents[i].ttl = current_ttl;
+            intents[i].seq = current_seq;
+            intents[i].action = 0;
+            intents[i].timestamp_us = now_us;
+            intents[i].integrity = compute_integrity(current_ttl, current_seq);
+            
+            g_state.hops[current_ttl].sent++;
+            current_seq++;
+            
+            current_ttl++;
+            if (__builtin_expect(current_ttl > 30, 0)) current_ttl = 1;
+        }
         
-        g_state.hops[current_ttl].sent++;
-        write(logic_to_gate_fd, &intent, sizeof(intent));
-        
-        current_seq++;
-        probes_sent++;
+        while (!nsr_shm_ring_push_batch(l2g, intents, LOGIC_BATCH, sizeof(nsr_intent_t)));
 
-        // [2] DRAIN OBSERVATIONS (Non-blocking)
-        while (poll(fds, 1, 0) > 0) {
-            nsr_observation_t obs;
-            if (read(gate_to_logic_fd, &obs, sizeof(obs)) == sizeof(obs)) {
-                update_state(obs.ttl, &obs);
-            } else {
-                break;
-            }
+        // [2] DRAIN OBSERVATIONS (SHM Pop)
+        nsr_observation_t obs;
+        while (nsr_shm_ring_pop(g2l, &obs, sizeof(obs))) {
+            update_state(obs.ttl, &obs);
         }
 
         // [3] PERIODIC TUI UPDATE
-        if (probes_sent % 10 == 0) {
+        static uint64_t last_tui_us = 0;
+        if (now_us - last_tui_us > 16666) {
             write(logic_to_tui_fd, &g_state, sizeof(g_state));
+            last_tui_us = now_us;
         }
-
-        // Round-robin TTL (1 to 30)
-        current_ttl++;
-        if (current_ttl > 30) current_ttl = 1;
-
-        // Deterministic Pacing (10ms)
-        struct timespec ts = {0, 10000000}; 
-        nanosleep(&ts, NULL);
+        
     }
 }

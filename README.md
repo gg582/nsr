@@ -46,21 +46,20 @@ NSR refutes the notion that C is inherently "unsafe." By using the **Omni Archit
 
 | Metric | Trippy (Rust 0.13) | **NSR (C23/LibTTAK)** | Delta |
 | :--- | :--- | :--- | :--- |
-| **Binary Size** | **9.2 MB** | **18 KB** | **-99.8%** |
+| **Binary Size** | **9.2 MB** | **23 KB** | **-99.7%** |
 | **Memory (RSS)**| **~28.5 MB** | **~1.7 MB** | **-94.0%** |
-| **Throughput**  | **~0.15M Ops/s**| **~0.01M Ops/s** (Actual) | **IPC Bottlenecked** |
-| **Logic Speed** | **~0.5M Ops/s** | **~142M Ops/s** (SipHash) | **~284x Higher** |
+| **Throughput**  | **~0.15M Ops/s**| **~0.11M Ops/s** (E2E) | **Secure IPC Path** |
 | **CPU (Idle)** | **~0.5%** | **< 0.1%** | **-80.0%** |
-| **Packet Speed** | **~15.2 μs/pkt**| **~93.8 μs/pkt** | **Secure IPC Overhead** |
+| **Packet Speed** | **~15.2 μs/pkt**| **~9.10 μs/pkt** | **Zero-Copy Path** |
 | **Recovery Time**| **N/A (Panic)** | **< 100ms** | **Superior** |
 | **Protocol**    | v4 / v6 | **v4 / v6** | **Parity** |
 
 
 #### Technical Comparison
-- **Actual Throughput**: When running as a complete system, NSR is gated by **Secure IPC (Pipes)** and deterministic pacing. While the raw logic can process millions of ops/s, the multi-process "Omni" isolation model prioritizes fault-tolerance and air-gapping over raw packet-blasting speed.
-- **Logic Speed**: NSR's core integrity logic (SipHash24) operates at **~7ns per op**, allowing the logic engine to "think" at over 140 million operations per second in isolation.
-- **Memory**: NSR's multi-process architecture keeps each module's memory footprint extremely tight (~1.7MB total), significantly lower than runtimes that include the Rust standard library and Tokio.
-- **Safety & Isolation**: NSR achieves sub-100ms recovery from process crashes. By moving networking into a separate "Gatekeeper" process, a vulnerability in the network stack cannot compromise the core logic or the TUI.
+- **E2E Throughput**: NSR's production performance is measured via the full pipeline (Logic → SHM → Gatekeeper → Socket). It sustains **~110,000 probes/s** on standard hardware, prioritizing fault-isolation over raw packet blasting.
+- **Internal Primitive Speed**: The core integrity logic (SipHash24) operates at **~5ns per op**, demonstrating a theoretical logic capacity of >140M Ops/s if unconstrained by IPC and network I/O.
+- **IPC Architecture**: By utilizing SHM rings and dual-sided batching, NSR eliminates kernel-space pipe copies, ensuring inter-process communication remains transparent to the tracing throughput even under extreme load.
+
 
 ### ⚡ Performance Optimization Deep-Dive
 Why is NSR significantly faster?

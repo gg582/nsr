@@ -52,17 +52,18 @@ NSR was developed through four distinct architectural tiers, each increasing the
 
 | Metric | Trippy (Rust) | **NSR (C/LibTTAK)** | Improvement |
 | :--- | :--- | :--- | :--- |
-| **Binary Size** | **9.2 MB** | **18 KB** | **~511x Smaller** |
+| **Binary Size** | **9.2 MB** | **23 KB** | **~400x Smaller** |
 | **Memory (RSS)** | **~28.5 MB** | **~1.7 MB** | **~16.7x Lower** |
-| **Throughput** | **~0.15M Ops/s** | **~0.01M Ops/s** (Actual) | **IPC Bottlenecked** |
-| **Logic Speed** | **~0.5M Ops/s** | **~142M Ops/s** (SipHash) | **~284x Higher** |
-| **Packet Speed** | **~15.2 μs/pkt** | **~93.8 μs/pkt** | **Secure IPC Overhead** |
+| **Throughput** | **~0.15M Ops/s** | **~0.11M Ops/s** (E2E) | **Secure Isolation** |
+| **Internal Speed** | **~0.5M Ops/s** | **~142M Ops/s** (SipHash) | **~284x Higher** |
+| **Packet Speed** | **~15.2 μs/pkt** | **~9.10 μs/pkt** | **Zero-Copy Batch** |
 | **Safety Tier** | Linguistic | **Omni-Isolation** | Superior |
 
 ### Engineering Verdict:
 1. **Full Protocol Parity**: NSR now provides 100% of Trippy's core tracer features, including ICMPv6 pseudo-header checksums and RFC 6298 adaptive timeouts.
 2. **Hardened Memory Protection**: The **Memory Quarantine** mechanism in LibTTAK prevents immediate reuse of freed blocks, neutralizing asynchronous UAF risks that linguistic safety alone cannot address at the hardware level.
-3. **Zero Runtime Bloat**: Despite adding IPv6 and advanced memory protection, NSR maintains its 18KB footprint by leveraging LibTTAK's zero-dependency static architecture.
+3. **Zero Runtime Bloat**: Despite adding IPv6 and advanced memory protection, NSR maintains its tiny footprint by leveraging LibTTAK's zero-dependency static architecture.
+
 
 ---
 

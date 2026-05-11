@@ -1,0 +1,9 @@
+nsr_omni_bin
+*.o
+*.a
+*.so
+.DS_Store
+.vscode/
+.idea/
+build/
+bin/
