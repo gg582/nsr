@@ -1,4 +1,3 @@
-````md
 ## NSR (Net muShRoom) 🍄
 
 > **N**ot **S**ome **R**ust
