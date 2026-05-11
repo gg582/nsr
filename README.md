@@ -17,7 +17,11 @@ NSR is a high-performance, **provably stable** C23 implementation of a multi-tar
 ```bash
 cd nsr
 make
-sudo ./nsr_singular_bin <target_ip> [options]
+sudo ./nsr_omni_bin <target_ip> [options]
+
+## Installation:
+## make install'
+## nsr <target_ip> [options]
 ```
 
 #### TUI Controls
