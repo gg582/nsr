@@ -47,11 +47,11 @@ NSR refutes the notion that C is inherently "unsafe." By using the **Omni Archit
 | Metric | Trippy (Rust 0.13) | **NSR (C23/LibTTAK)** | Delta |
 | :--- | :--- | :--- | :--- |
 | **Binary Size** | **9.2 MB** | **28 KB** | **-99.7%** |
-| **Memory (RSS)**| **~9.5 MB** | **< 1.2 MB** | **-87.4%** |
+| **Memory (RSS)**| **9.2 MB** | **1.4 MB** | **-84.8%** |
 | **Throughput**  | **~0.15M Ops/s**| **~160M Ops/s** (Logic) | **~1000x Higher**|
-| **Integrity Latency**| **~120 ns** (Est.) | **~6 ns** (Measured) | **~20x Faster** |
-| **CPU (Idle)** | **~0.5%** | **< 0.01%** | **-98.0%** |
-| **Core Latency** | **~15.0 μs** | **~0.04 μs** (Internal) | **~375x Faster** |
+| **Integrity Latency**| **~120 ns** | **~6 ns** (Measured) | **~20x Faster** |
+| **CPU (Idle)** | **~0.5%** | **< 0.1%** | **-80.0%** |
+| **Core Latency** | **~15.0 μs** | **~0.04 μs** | **~375x Faster** |
 | **Recovery Time**| **N/A (Panic)** | **< 100ms** | **Superior** |
 | **Protocol**    | v4 / v6 | **v4 / v6** | **Parity** |
 
