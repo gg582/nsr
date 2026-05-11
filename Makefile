@@ -1,7 +1,36 @@
 CC = gcc
-CFLAGS = -I./include -I./lib/libttak/include -Wall -Wextra -Ofast -march=native -flto -std=c23 -D_XOPEN_SOURCE_EXTENDED
-LDFLAGS = -L./lib/libttak -lttak -lpthread -lncursesw -Ofast -flto
 
+CFLAGS = \
+    -I./include \
+    -I./lib/libttak/include \
+    -Wall \
+    -Wextra \
+    -Ofast \
+    -march=native \
+    -mtune=native \
+    -flto=auto \
+    -fomit-frame-pointer \
+    -fno-plt \
+    -fvisibility=hidden \
+    -ffunction-sections \
+    -fdata-sections \
+    -fstrict-aliasing \
+    -fno-math-errno \
+    -fno-asynchronous-unwind-tables \
+    -std=c23 \
+    -D_XOPEN_SOURCE_EXTENDED
+LDFLAGS = \
+    -L./lib/libttak \
+    -lttak \
+    -lpthread \
+    -lncursesw \
+    -flto \
+    -Wl,--gc-sections \
+    -Wl,--as-needed \
+    -Wl,--strip-all \
+    -Wl,-Ofast
+
+OMNI_OBJ = $(OMNI_SRC:.c=.o)
 OMNI_SRC = src/main.c src/omni_gatekeeper.c src/omni_logic.c src/tui.c src/stubs.c
 SINGULAR_SRC = src/singular_broker.c src/singular_sender.c src/singular_receiver.c
 BENCH_SRC = bench_nsr.c
@@ -25,6 +54,8 @@ $(BENCH_E2E_TARGET): bench_nsr_e2e.c $(OMNI_CORE_OBJ)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
+install:
+	cp nsr_omni_bin /usr/local/bin/nsr
 
 clean:
 	rm -f src/*.o *.o $(TARGET) $(BENCH_TARGET)

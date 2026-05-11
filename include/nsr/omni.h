@@ -36,11 +36,12 @@ typedef struct {
     uint16_t seq;
     uint64_t rtt_us;
     nsr_obs_type_t type;
-    char     addr[48]; /**< Source address of the response */
+    uint8_t  addr_bin[16]; /**< Binary address (v4 or v6) */
+    bool     is_v6;
 } nsr_observation_t;
 
 #define NSR_MAX_HOPS 64
-#define NSR_GK_MAX_INFLIGHT 1024
+#define NSR_GK_MAX_INFLIGHT 65536
 #define NSR_INTEGRITY_KEY0 0xDEADC0DECAFEBABEULL
 #define NSR_INTEGRITY_KEY1 0xFEEDFACEBEEFCAFEULL
 
@@ -64,6 +65,6 @@ typedef struct {
 #include <nsr/shm_ring.h>
 
 void nsr_omni_gatekeeper_omega(nsr_shm_ring_t *l2g, nsr_shm_ring_t *g2l, const char *target);
-void nsr_omni_logic_omega(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, int l2t_fd);
+void nsr_omni_logic_omega(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, nsr_shm_ring_large_t *l2t);
 
 #endif

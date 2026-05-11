@@ -33,7 +33,7 @@ void spawn_gatekeeper(nsr_shm_ring_t *l2g, nsr_shm_ring_t *g2l, const char *targ
     }
 }
 
-void spawn_logic(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, int l2t) {
+void spawn_logic(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, nsr_shm_ring_large_t *l2t) {
     g_logic_pid = fork();
     if (g_logic_pid == 0) {
         cpu_set_t cpuset;
@@ -57,29 +57,25 @@ int main(int argc, char **argv) {
     alarm(duration);
 
     size_t shm_size = sizeof(nsr_shm_ring_t);
+    size_t shm_large_size = sizeof(nsr_shm_ring_large_t);
     nsr_shm_ring_t *l2g = mmap(NULL, shm_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     nsr_shm_ring_t *g2l = mmap(NULL, shm_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    nsr_shm_ring_large_t *l2t = mmap(NULL, shm_large_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     memset(l2g, 0, shm_size);
     memset(g2l, 0, shm_size);
-
-    int l2t[2];
-    if (pipe(l2t) < 0) {
-        perror("pipe");
-        return EXIT_FAILURE;
-    }
-    fcntl(l2t[0], F_SETFL, O_NONBLOCK);
+    memset(l2t, 0, shm_large_size);
 
     struct timespec start_ts, end_ts;
     clock_gettime(CLOCK_MONOTONIC, &start_ts);
     spawn_gatekeeper(l2g, g2l, argv[1]);
-    spawn_logic(g2l, l2g, l2t[1]);
+    spawn_logic(g2l, l2g, l2t);
 
     nsr_omni_state_t last_state;
     memset(&last_state, 0, sizeof(last_state));
 
     while (g_running) {
         nsr_omni_state_t new_state;
-        while (read(l2t[0], &new_state, sizeof(new_state)) == sizeof(new_state)) {
+        while (nsr_shm_ring_large_pop(l2t, &new_state, sizeof(new_state))) {
             memcpy(&last_state, &new_state, sizeof(last_state));
         }
         struct timespec ts = {0, 100000000}; // 100ms

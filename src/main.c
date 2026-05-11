@@ -39,7 +39,7 @@ void spawn_gatekeeper_omega(nsr_shm_ring_t *l2g, nsr_shm_ring_t *g2l, const char
     }
 }
 
-void spawn_logic_omega(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, int l2t) {
+void spawn_logic_omega(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, nsr_shm_ring_t *l2t) {
     g_logic_pid = fork();
     if (g_logic_pid == 0) {
         signal(SIGINT, SIG_DFL);
@@ -72,25 +72,20 @@ int main(int argc, char **argv) {
                                MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     nsr_shm_ring_t *g2l = mmap(NULL, shm_size, PROT_READ | PROT_WRITE, 
                                MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    nsr_shm_ring_t *l2t = mmap(NULL, shm_size, PROT_READ | PROT_WRITE, 
+                               MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     
-    if (l2g == MAP_FAILED || g2l == MAP_FAILED) {
+    if (l2g == MAP_FAILED || g2l == MAP_FAILED || l2t == MAP_FAILED) {
         perror("mmap");
         return EXIT_FAILURE;
     }
 
     memset(l2g, 0, shm_size);
     memset(g2l, 0, shm_size);
-
-    int l2t[2];
-    if (pipe(l2t) < 0) {
-        perror("pipe");
-        return EXIT_FAILURE;
-    }
-    fcntl(l2t[1], F_SETPIPE_SZ, 1048576);
-    fcntl(l2t[0], F_SETFL, O_NONBLOCK);
+    memset(l2t, 0, shm_size);
 
     spawn_gatekeeper_omega(l2g, g2l, argv[1]);
-    spawn_logic_omega(g2l, l2g, l2t[1]);
+    spawn_logic_omega(g2l, l2g, l2t);
 
     if (!silent) {
         nsr_tui_init();
@@ -109,12 +104,12 @@ int main(int argc, char **argv) {
                 spawn_gatekeeper_omega(l2g, g2l, argv[1]);
             } else if (exited_pid == g_logic_pid) {
                 if (!silent) fprintf(stderr, "[ULTRA] Logic Engine crashed! status=%d\n", status);
-                spawn_logic_omega(g2l, l2g, l2t[1]);
+                spawn_logic_omega(g2l, l2g, l2t);
             }
         }
 
         nsr_omni_state_t new_state;
-        while (read(l2t[0], &new_state, sizeof(new_state)) == sizeof(new_state)) {
+        while (nsr_shm_ring_pop(l2t, &new_state, sizeof(new_state))) {
             memcpy(&last_state, &new_state, sizeof(last_state));
         }
         
@@ -123,7 +118,7 @@ int main(int argc, char **argv) {
             if (nsr_tui_update()) break;
         }
         
-        struct timespec ts = {0, 50000000}; 
+        struct timespec ts = {0, 16666666}; // 60fps check
         nanosleep(&ts, NULL);
     }
 

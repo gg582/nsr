@@ -14,8 +14,15 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <errno.h>
+#include <arpa/inet.h>
+
+typedef struct {
+    uint8_t addr_bin[16];
+    bool is_v6;
+} nsr_hop_addr_cache_t;
 
 static nsr_omni_state_t g_state;
+static nsr_hop_addr_cache_t g_addr_cache[NSR_MAX_HOPS];
 
 static void update_state(uint8_t ttl, nsr_observation_t *obs) {
     if (ttl >= NSR_MAX_HOPS || ttl == 0) return;
@@ -24,34 +31,49 @@ static void update_state(uint8_t ttl, nsr_observation_t *obs) {
     if (obs->type == NSR_OBS_REPLY || obs->type == NSR_OBS_EXCEEDED) {
         h->recv++;
         h->rtt_us = obs->rtt_us;
-        strncpy(h->addr, obs->addr, sizeof(h->addr));
+        
+        bool changed = (obs->is_v6 != g_addr_cache[ttl].is_v6) || 
+                       (memcmp(g_addr_cache[ttl].addr_bin, obs->addr_bin, obs->is_v6 ? 16 : 4) != 0);
+        
+        if (__builtin_expect(changed, 0)) {
+            g_addr_cache[ttl].is_v6 = obs->is_v6;
+            memcpy(g_addr_cache[ttl].addr_bin, obs->addr_bin, 16);
+            if (obs->is_v6) {
+                inet_ntop(AF_INET6, obs->addr_bin, h->addr, sizeof(h->addr));
+            } else {
+                struct in_addr ia; memcpy(&ia, obs->addr_bin, 4);
+                inet_ntop(AF_INET, &ia, h->addr, sizeof(h->addr));
+            }
+        }
     }
     h->last_status = obs->type;
 }
 
-static uint64_t compute_integrity(uint8_t ttl, uint16_t seq) {
-    uint64_t val = ((uint64_t)ttl << 16) | (uint64_t)seq;
-    return ttak_siphash24_u64(val, NSR_INTEGRITY_KEY0, NSR_INTEGRITY_KEY1);
+static inline uint64_t compute_integrity_fast(uint8_t ttl, uint16_t seq) {
+    return ((uint64_t)ttl << 16) | (uint64_t)seq;
 }
 
-void nsr_omni_logic_omega(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, int logic_to_tui_fd) {
+void nsr_omni_logic_omega(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, nsr_shm_ring_large_t *l2t) {
     memset(&g_state, 0, sizeof(g_state));
+    memset(g_addr_cache, 0, sizeof(g_addr_cache));
     g_state.start_time_us = ttak_get_tick_count_ns() / 1000;
     
     uint8_t current_ttl = 1;
     uint16_t current_seq = 0;
 
+    #define LOGIC_BATCH 1024
+    nsr_intent_t intents[LOGIC_BATCH];
+    nsr_observation_t observations[LOGIC_BATCH];
+
     while (1) {
         // [1] EMIT PROBE INTENT (Batching to SHM)
-        #define LOGIC_BATCH 32
-        nsr_intent_t intents[LOGIC_BATCH];
         uint64_t now_us = ttak_get_tick_count_ns() / 1000;
         for (int i = 0; i < LOGIC_BATCH; i++) {
             intents[i].ttl = current_ttl;
             intents[i].seq = current_seq;
             intents[i].action = 0;
             intents[i].timestamp_us = now_us;
-            intents[i].integrity = compute_integrity(current_ttl, current_seq);
+            intents[i].integrity = compute_integrity_fast(current_ttl, current_seq);
             
             g_state.hops[current_ttl].sent++;
             current_seq++;
@@ -62,18 +84,20 @@ void nsr_omni_logic_omega(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, int logic_to
         
         while (!nsr_shm_ring_push_batch(l2g, intents, LOGIC_BATCH, sizeof(nsr_intent_t)));
 
-        // [2] DRAIN OBSERVATIONS (SHM Pop)
-        nsr_observation_t obs;
-        while (nsr_shm_ring_pop(g2l, &obs, sizeof(obs))) {
-            update_state(obs.ttl, &obs);
+        // [2] DRAIN OBSERVATIONS (SHM Pop Batch)
+        while (1) {
+            int n_obs = nsr_shm_ring_pop_batch(g2l, observations, LOGIC_BATCH, sizeof(nsr_observation_t));
+            if (n_obs <= 0) break;
+            for (int i = 0; i < n_obs; i++) {
+                update_state(observations[i].ttl, &observations[i]);
+            }
         }
 
         // [3] PERIODIC TUI UPDATE
         static uint64_t last_tui_us = 0;
         if (now_us - last_tui_us > 16666) {
-            write(logic_to_tui_fd, &g_state, sizeof(g_state));
+            nsr_shm_ring_large_push(l2t, &g_state, sizeof(g_state));
             last_tui_us = now_us;
         }
-        
     }
 }
