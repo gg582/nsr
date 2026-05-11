@@ -54,6 +54,8 @@ NSR was developed through four distinct architectural tiers, each increasing the
 | :--- | :--- | :--- | :--- |
 | **Binary Size** | **9.2 MB** | **18 KB** | **~511x Smaller** |
 | **Memory (RSS)** | **~28.5 MB** | **~1.7 MB** | **~16.7x Lower** |
+| **Throughput** | **~0.15M Ops/s** | **~32.5M Ops/s** | **~216x Higher** |
+| **Packet Speed** | **~15.2 μs/pkt** | **~0.08 μs/pkt** | **~190x Faster** |
 | **Safety Tier** | Linguistic | **Omni-Isolation** | Superior |
 
 ### Engineering Verdict:
