@@ -46,21 +46,21 @@ NSR refutes the notion that C is inherently "unsafe." By using the **Omni Archit
 
 | Metric | Trippy (Rust 0.13) | **NSR (C23/LibTTAK)** | Delta |
 | :--- | :--- | :--- | :--- |
-| **Binary Size** | **9.2 MB** | **28 KB** | **-99.7%** |
-| **Memory (RSS)**| **9.2 MB** | **1.4 MB** | **-84.8%** |
-| **Throughput**  | **~0.15M Ops/s**| **~160M Ops/s** (Logic) | **~1000x Higher**|
-| **Integrity Latency**| **~120 ns** | **~6 ns** (Measured) | **~20x Faster** |
+| **Binary Size** | **9.2 MB** | **18 KB** | **-99.8%** |
+| **Memory (RSS)**| **~28.5 MB** | **~1.7 MB** | **-94.0%** |
+| **Throughput**  | **~0.15M Ops/s**| **~0.01M Ops/s** (Actual) | **IPC Bottlenecked** |
+| **Logic Speed** | **~0.5M Ops/s** | **~142M Ops/s** (SipHash) | **~284x Higher** |
 | **CPU (Idle)** | **~0.5%** | **< 0.1%** | **-80.0%** |
-| **Core Latency** | **~15.0 μs** | **~0.04 μs** | **~375x Faster** |
+| **Packet Speed** | **~15.2 μs/pkt**| **~93.8 μs/pkt** | **Secure IPC Overhead** |
 | **Recovery Time**| **N/A (Panic)** | **< 100ms** | **Superior** |
 | **Protocol**    | v4 / v6 | **v4 / v6** | **Parity** |
 
 
 #### Technical Comparison
-- **Throughput**: NSR's core integrity and state logic operate at **~6ns per op**, theoretically allowing over 160 million operations per second on a single core. This is enabled by LibTTAK's zero-copy path and the removal of heavy async runtime overhead.
-- **Memory**: Trippy's RSS is dominated by the Rust standard library and the Tokio runtime. NSR's multi-process architecture keeps each module's memory footprint extremely tight, with the entire suite running in less than 1.2MB.
-- **Latency**: By bypassing complex event loop scheduling and using direct `poll()` on raw sockets, NSR achieves sub-microsecond internal processing latency.
-- **Safety**: While Rust provides memory safety, NSR provides **Fault Isolation**. A crash in the network parser (Gatekeeper) is isolated from the state authority (Logic) and the TUI, with the Supervisor providing sub-100ms recovery.
+- **Actual Throughput**: When running as a complete system, NSR is gated by **Secure IPC (Pipes)** and deterministic pacing. While the raw logic can process millions of ops/s, the multi-process "Omni" isolation model prioritizes fault-tolerance and air-gapping over raw packet-blasting speed.
+- **Logic Speed**: NSR's core integrity logic (SipHash24) operates at **~7ns per op**, allowing the logic engine to "think" at over 140 million operations per second in isolation.
+- **Memory**: NSR's multi-process architecture keeps each module's memory footprint extremely tight (~1.7MB total), significantly lower than runtimes that include the Rust standard library and Tokio.
+- **Safety & Isolation**: NSR achieves sub-100ms recovery from process crashes. By moving networking into a separate "Gatekeeper" process, a vulnerability in the network stack cannot compromise the core logic or the TUI.
 
 ### ⚡ Performance Optimization Deep-Dive
 Why is NSR significantly faster?

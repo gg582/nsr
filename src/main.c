@@ -44,9 +44,11 @@ void spawn_logic(int g2l, int l2g, int l2t) {
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <target_ip>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <target_ip> [--silent]\n", argv[0]);
         return EXIT_FAILURE;
     }
+
+    bool silent = (argc > 2 && strcmp(argv[2], "--silent") == 0);
 
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
@@ -64,13 +66,19 @@ int main(int argc, char **argv) {
     spawn_gatekeeper(l2g[0], g2l[1], argv[1]);
     spawn_logic(g2l[0], l2g[1], l2t[1]);
 
-    nsr_tui_init();
+    if (!silent) {
+        nsr_tui_init();
+    }
     
     nsr_omni_state_t last_state;
     memset(&last_state, 0, sizeof(last_state));
     strncpy(last_state.target_ip, argv[1], sizeof(last_state.target_ip));
 
-    printf("[ULTRA] Supervisor active. Monitoring Gatekeeper(%d) and Logic(%d)\n", g_gk_pid, g_logic_pid);
+    if (silent) {
+        printf("[ULTRA] Supervisor active in SILENT mode. Monitoring Gatekeeper(%d) and Logic(%d)\n", g_gk_pid, g_logic_pid);
+    } else {
+        printf("[ULTRA] Supervisor active. Monitoring Gatekeeper(%d) and Logic(%d)\n", g_gk_pid, g_logic_pid);
+    }
 
     while (g_running) {
         // [1] Monitor Children
@@ -78,10 +86,10 @@ int main(int argc, char **argv) {
         pid_t exited_pid = waitpid(-1, &status, WNOHANG);
         if (exited_pid > 0) {
             if (exited_pid == g_gk_pid) {
-                fprintf(stderr, "[ULTRA] Gatekeeper crashed! Restarting...\n");
+                if (!silent) fprintf(stderr, "[ULTRA] Gatekeeper crashed! Restarting...\n");
                 spawn_gatekeeper(l2g[0], g2l[1], argv[1]);
             } else if (exited_pid == g_logic_pid) {
-                fprintf(stderr, "[ULTRA] Logic Engine crashed! Restarting...\n");
+                if (!silent) fprintf(stderr, "[ULTRA] Logic Engine crashed! Restarting...\n");
                 spawn_logic(g2l[0], l2g[1], l2t[1]);
             }
         }
@@ -91,15 +99,19 @@ int main(int argc, char **argv) {
         while (read(l2t[0], &new_state, sizeof(new_state)) == sizeof(new_state)) {
             memcpy(&last_state, &new_state, sizeof(last_state));
         }
-        nsr_tui_render(&last_state);
-
-        if (nsr_tui_update()) break;
+        
+        if (!silent) {
+            nsr_tui_render(&last_state);
+            if (nsr_tui_update()) break;
+        }
         
         struct timespec ts = {0, 50000000}; // 50ms check loop
         nanosleep(&ts, NULL);
     }
 
-    nsr_tui_cleanup();
+    if (!silent) {
+        nsr_tui_cleanup();
+    }
     
     if (g_gk_pid > 0) kill(g_gk_pid, SIGTERM);
     if (g_logic_pid > 0) kill(g_logic_pid, SIGTERM);
