@@ -1,66 +1,66 @@
 #include <nsr/singular.h>
-#include <ttak/process/supervisor.h>
-#include <ttak/io/multiplex.h>
+#include <ttak/timing/timing.h>
 #include <unistd.h>
 #include <string.h>
 #include <stdio.h>
-
-uint64_t g_nsr_mask = 0xDEADC0DECAFEBABEULL; // Should be initialized with HW RNG
-
-/**
- * @brief Immutable Event Log (Append-Only)
- */
-#define MAX_LOG_ENTRIES 10000
-static nsr_msg_t g_event_log[MAX_LOG_ENTRIES];
-static size_t g_log_idx = 0;
-
-static void append_to_log(const nsr_msg_t *msg) {
-    // Immutable append logic
-    if (g_log_idx < MAX_LOG_ENTRIES) {
-        g_event_log[g_log_idx++] = *msg;
-    }
-}
+#include <stdlib.h>
+#include <poll.h>
 
 void nsr_singular_broker_main(const char *target) {
-    int sender_pipe[2];   // Broker -> Sender
-    int receiver_pipe[2]; // Receiver -> Broker
+    int s_pipe[2]; // Broker -> Sender
+    int r_pipe[2]; // Receiver -> Broker
     
-    pipe(sender_pipe);
-    pipe(receiver_pipe);
+    if (pipe(s_pipe) < 0 || pipe(r_pipe) < 0) {
+        perror("pipe");
+        return;
+    }
 
-    // 1. Spawn Workers (Fault-Tolerant)
-    ttak_supervisor_t *sv = ttak_supervisor_create();
-    ttak_supervisor_spawn_ext(sv, (void*)nsr_singular_sender_main, sender_pipe[0]);
-    ttak_supervisor_spawn_ext(sv, (void*)nsr_singular_receiver_main, receiver_pipe[1]);
+    pid_t s_pid = fork();
+    if (s_pid == 0) {
+        close(s_pipe[1]); close(r_pipe[0]); close(r_pipe[1]);
+        nsr_singular_sender_main(s_pipe[0]);
+        exit(0);
+    }
 
-    printf("[SINGULAR] Broker active. target=%s\n", target);
+    pid_t r_pid = fork();
+    if (r_pid == 0) {
+        close(s_pipe[0]); close(s_pipe[1]); close(r_pipe[0]);
+        nsr_singular_receiver_main(r_pipe[1]);
+        exit(0);
+    }
 
-    while (true) {
-        // Zero-Shared Communication: Only messaging, no SHM
-        ttak_io_wait_t wait;
-        ttak_io_multiplex_wait(&wait, receiver_pipe[0], 500 /* ms */);
+    close(s_pipe[0]); close(r_pipe[1]);
 
-        if (wait.triggered) {
+    printf("[SINGULAR] Broker active. Target: %s\n", target);
+
+    struct pollfd fds[1];
+    fds[0].fd = r_pipe[0];
+    fds[0].events = POLLIN;
+
+    uint16_t seq = 0;
+    while (1) {
+        // 1. Send Probe Command
+        nsr_msg_t cmd = {
+            .magic = NSR_MSG_MAGIC,
+            .type = 0, // SEND_REQ
+            .ttl = (uint8_t)(seq % 30 + 1),
+            .seq = seq++,
+            .ts_us = ttak_get_tick_count_ns() / 1000
+        };
+        write(s_pipe[1], &cmd, sizeof(cmd));
+
+        // 2. Poll for Events
+        if (poll(fds, 1, 10) > 0) {
             nsr_msg_t event;
-            if (read(receiver_pipe[0], &event, sizeof(event)) == sizeof(event)) {
-                if (event.magic == NSR_MSG_MAGIC) {
-                    append_to_log(&event);
+            if (read(r_pipe[0], &event, sizeof(event)) == sizeof(event)) {
+                if (event.magic == NSR_MSG_MAGIC && event.type == 1 /* RECV_EVT */) {
+                    uint64_t rtt = (ttak_get_tick_count_ns() / 1000) - event.ts_us;
+                    printf("[SINGULAR] RTT: %lu us, Seq: %u, TTL: %d\n", rtt, event.seq, event.ttl);
                 }
             }
         }
 
-        // Periodic Tick: Command Sender to fire new probes
-        nsr_msg_t cmd = {
-            .magic = NSR_MSG_MAGIC,
-            .type = 0, // SEND_REQ
-            .ttl = (uint8_t)(rand() % 15 + 1),
-            .ts_us = ttak_timing_now_us()
-        };
-        write(sender_pipe[1], &cmd, sizeof(cmd));
-
-        // Reconstruct TUI view from Immutable Log (Simplified)
-        // nsr_tui_render_from_log(g_event_log, g_log_idx);
-        
-        ttak_timing_sleep(ttak_duration_from_ms(100));
+        struct timespec ts = {0, 100000000}; // 100ms pacing
+        nanosleep(&ts, NULL);
     }
 }
