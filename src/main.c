@@ -42,13 +42,52 @@ void spawn_gatekeeper_omega(nsr_shm_ring_t *l2g, nsr_shm_ring_t *g2l, const char
 #include <netdb.h>
 #include <arpa/inet.h>
 
+#include <getopt.h>
+
 int main(int argc, char **argv) {
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s <target_ip_or_hostname> [--silent]\n", argv[0]);
-        return EXIT_FAILURE;
+    uint32_t interval_ms = 100;
+    bool silent = false;
+    char *target_arg = NULL;
+
+    static struct option long_options[] = {
+        {"interval", required_argument, 0, 'i'},
+        {"silent",   no_argument,       0, 's'},
+        {"help",     no_argument,       0, 'h'},
+        {0, 0, 0, 0}
+    };
+
+    int opt;
+    while ((opt = getopt_long(argc, argv, "i:sh", long_options, NULL)) != -1) {
+        switch (opt) {
+            case 'i':
+                interval_ms = atoi(optarg);
+                if (interval_ms < 10) {
+                    fprintf(stderr, "Notice: Adjusted interval from %u ms to 10 ms to properly diagnose.\n", interval_ms);
+                    interval_ms = 10;
+                } else if (interval_ms > 1000) {
+                    fprintf(stderr, "Notice: Adjusted interval from %u ms to 1000 ms to properly diagnose.\n", interval_ms);
+                    interval_ms = 1000;
+                }
+                break;
+            case 's':
+                silent = true;
+                break;
+            case 'h':
+            default:
+                fprintf(stderr, "Usage: %s <target> [-i ms] [--silent]\n", argv[0]);
+                fprintf(stderr, "Options:\n");
+                fprintf(stderr, "  -i, --interval MS   Transmission interval in milliseconds (default: 100)\n");
+                fprintf(stderr, "  -s, --silent        Run without TUI\n");
+                return EXIT_FAILURE;
+        }
     }
 
-    bool silent = (argc > 2 && strcmp(argv[2], "--silent") == 0);
+    if (optind < argc) {
+        target_arg = argv[optind];
+    } else {
+        fprintf(stderr, "Error: Target hostname or IP is required.\n");
+        return EXIT_FAILURE;
+    }
 
     // Resolve hostname if necessary
     char target_ip[64];
@@ -57,8 +96,8 @@ int main(int argc, char **argv) {
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_RAW;
 
-    if (getaddrinfo(argv[1], NULL, &hints, &res) != 0) {
-        fprintf(stderr, "Could not resolve hostname: %s\n", argv[1]);
+    if (getaddrinfo(target_arg, NULL, &hints, &res) != 0) {
+        fprintf(stderr, "Could not resolve hostname: %s\n", target_arg);
         return EXIT_FAILURE;
     }
 
@@ -98,7 +137,7 @@ int main(int argc, char **argv) {
     memset(l2g, 0, shm_size);
     memset(g2l, 0, shm_size);
     memset(l2t, 0, shm_large_size);
-    atomic_init(&config->interval_ms, 50);
+    atomic_init(&config->interval_ms, interval_ms);
 
     spawn_gatekeeper_omega(l2g, g2l, target_ip);
     
@@ -155,7 +194,14 @@ int main(int argc, char **argv) {
             }
             if (cmd == 5) { // Decrease interval
                 uint32_t current = atomic_load(&config->interval_ms);
-                if (current > 0) atomic_store(&config->interval_ms, current - 10);
+                if (current > 10) {
+                    atomic_store(&config->interval_ms, current - 10);
+                } else if (current > 0) {
+                     atomic_store(&config->interval_ms, 10);
+                }
+            }
+            if (cmd == 6) { // Toggle Settings Dashboard
+                nsr_tui_toggle_dashboard();
             }
         }
         

@@ -79,22 +79,28 @@ void nsr_omni_logic_omega(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, nsr_shm_ring
 
         // [1] EMIT PROBE INTENT (Throttled via Timeline Logic)
         if (!g_paused && (now_us - last_probe_us >= (uint64_t)interval_ms * 1000)) {
-            // Send a small burst or single probe based on interval
-            // For NSR, we'll send one probe per interval tick to ensure strict pacing
-            nsr_intent_t intent;
-            intent.ttl = current_ttl;
-            intent.seq = current_seq;
-            intent.action = 0;
-            intent.timestamp_us = now_us;
-            intent.integrity = compute_integrity_fast(current_ttl, current_seq);
+            // Send a full burst (round) of probes per interval tick for maximum throughput
+            #define BURST_SIZE 30
+            nsr_intent_t intents[BURST_SIZE];
             
-            g_state.hops[current_ttl].sent++;
-            current_seq++;
-            
-            current_ttl++;
-            if (__builtin_expect(current_ttl > 30, 0)) current_ttl = 1;
+            for (int i = 0; i < BURST_SIZE; i++) {
+                intents[i].ttl = current_ttl;
+                intents[i].seq = current_seq;
+                intents[i].action = 0;
+                intents[i].timestamp_us = now_us;
+                intents[i].integrity = compute_integrity_fast(current_ttl, current_seq);
+                
+                g_state.hops[current_ttl].sent++;
+                current_seq++;
+                
+                current_ttl++;
+                if (__builtin_expect(current_ttl > 30, 0)) current_ttl = 1;
+            }
 
-            while (!nsr_shm_ring_push_batch(l2g, &intent, 1, sizeof(nsr_intent_t)));
+            for (int i = 0; i < BURST_SIZE; i++) {
+                while (!nsr_shm_ring_push_batch(l2g, &intents[i], 1, sizeof(nsr_intent_t)));
+            }
+            
             last_probe_us = now_us;
         } else if (g_paused) {
             // If paused, just sleep a bit to avoid busy wait

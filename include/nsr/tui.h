@@ -21,8 +21,13 @@ void nsr_tui_cleanup(void);
 
 /**
  * @brief Handles user input (non-blocking).
- * @return 0: No action, 1: Quit, 2: Pause Toggle, 3: Stats Toggle
+ * @return 0: No action, 1: Quit, 2: Pause Toggle, 3: Stats Toggle, 4: Increase Interval, 5: Decrease Interval, 6: Toggle Dashboard
  */
 int nsr_tui_update(void);
+
+/**
+ * @brief Toggles the visibility of the settings dashboard.
+ */
+void nsr_tui_toggle_dashboard(void);
 
 #endif

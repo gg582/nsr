@@ -49,6 +49,11 @@ static void draw_box(int y, int x, int h, int w, const char *title) {
 }
 
 static bool g_show_stats = false;
+static bool g_show_dashboard = false;
+
+void nsr_tui_toggle_dashboard(void) {
+    g_show_dashboard = !g_show_dashboard;
+}
 
 void nsr_tui_render(nsr_omni_state_t *state) {
     int max_y, max_x;
@@ -145,10 +150,32 @@ void nsr_tui_render(nsr_omni_state_t *state) {
         mvprintw(row, 44, "%4u  %4u  %3.0f%%", h->sent, h->recv, loss);
     }
 
+    // Settings Dashboard Overlay
+    if (g_show_dashboard) {
+        int w = 50;
+        int h = 10;
+        int y = (max_y - h) / 2;
+        int x = (max_x - w) / 2;
+
+        // Clear background for dashboard
+        for (int i = 0; i < h; i++) {
+            mvhline(y + i, x, ' ', w);
+        }
+
+        draw_box(y, x, h, w, "SETTINGS DASHBOARD");
+        
+        attron(A_BOLD);
+        mvprintw(y + 2, x + 2, "Tracer Settings:");
+        attroff(A_BOLD);
+        
+        mvprintw(y + 4, x + 2, "[+/-] Minimum Round Duration (-i): %d ms", state->interval_ms);
+        mvprintw(y + 6, x + 2, "Press [D] to close");
+    }
+
     // 4. Footer
     attron(COLOR_PAIR(5));
     mvhline(max_y - 1, 0, ' ', max_x);
-    mvprintw(max_y - 1, 2, "[Q] Quit  [S] Stats  [P] Pause  [+/-] Interval (NSR Omni Physical Isolation)");
+    mvprintw(max_y - 1, 2, "[Q] Quit  [S] Stats  [P] Pause  [D] Settings  [+/-] Interval");
     attroff(COLOR_PAIR(5));
 
     refresh();
@@ -164,6 +191,7 @@ int nsr_tui_update(void) {
     }
     if (ch == '+' || ch == '=') return 4;
     if (ch == '-' || ch == '_') return 5;
+    if (ch == 'd' || ch == 'D') return 6;
     return 0;
 }
 

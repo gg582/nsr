@@ -47,11 +47,21 @@ void spawn_logic(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, nsr_shm_ring_large_t 
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <target_ip> [duration_s]\n", argv[0]);
+        fprintf(stderr, "Usage: %s <target_ip> [duration_s] [interval_ms]\n", argv[0]);
         return EXIT_FAILURE;
     }
 
     int duration = (argc > 2) ? atoi(argv[2]) : 10;
+    int interval_ms = (argc > 3) ? atoi(argv[3]) : 50;
+
+    if (interval_ms < 10) {
+        fprintf(stderr, "Notice: Adjusted interval from %d ms to 10 ms to properly diagnose.\n", interval_ms);
+        interval_ms = 10;
+    } else if (interval_ms > 1000) {
+        fprintf(stderr, "Notice: Adjusted interval from %d ms to 1000 ms to properly diagnose.\n", interval_ms);
+        interval_ms = 1000;
+    }
+
     signal(SIGINT, signal_handler);
     signal(SIGALRM, signal_handler);
     alarm(duration);
@@ -71,7 +81,7 @@ int main(int argc, char **argv) {
     memset(l2g, 0, shm_size);
     memset(g2l, 0, shm_size);
     memset(l2t, 0, shm_large_size);
-    atomic_init(&config->interval_ms, 50);
+    atomic_init(&config->interval_ms, interval_ms);
 
     struct timespec start_ts, end_ts;
     clock_gettime(CLOCK_MONOTONIC, &start_ts);

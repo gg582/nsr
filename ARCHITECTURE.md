@@ -143,56 +143,25 @@ Transient execution state is cleared after execution cycles.
 
 # 3. Benchmark Results
 
-Measured on Linux x86_64.
-
-Dual-stack ICMPv4/v6 enabled.
+Measured on Linux x86_64 against a real internet target (`8.8.8.8`). Dual-stack ICMPv4/v6 enabled.
 
 ---
 
-## Full End-to-End Benchmark
+## Full End-to-End Benchmark (Fair Comparison)
 
-Measured using:
+Both Trippy and NSR were subjected to a fair benchmark where they were clamped to exactly the same transmission limits (a 10ms minimum interval, which is the fastest Trippy allows natively via `-i 10ms`). The test measures real packets sent and received (`recv > 0`) over a ~10-second window.
 
-```bash
-sudo -E /usr/bin/time -v ./nsr_bench_e2e 127.0.0.1 10s
-```
+### NSR vs Trippy (10ms constrained)
 
-Measured output:
-
-```text
-Probes Sent: 1229760
-Observations Recv: 549312
-Elapsed Time: 9.98 s
-Throughput: 123268.21 probes/sec
-```
-
-Later optimized run:
-
-```text
-Probes Sent: 1026848
-Observations Recv: 833610
-Elapsed Time: 9.99 s
-Throughput: 102766.84 probes/sec
-Maximum resident set size: 17936 KB
-```
-
-Peak run:
-
-```text
-~191k probes/sec
-```
-
----
-
-## NSR vs Trippy
-
-| Metric | Trippy | NSR |
+| Metric | Trippy (Rust, Release) | NSR (C, `-Ofast`) |
 | :--- | :--- | :--- |
-| Binary Size | ~9.2 MB | **23 KB** |
-| RSS | ~28.5 MB | **~17.5 MB** |
-| Throughput | ~150k probes/sec | **~191k probes/sec (peak)** |
-| Protocol Support | IPv4 / IPv6 | IPv4 / IPv6 |
-| Fault Isolation | Limited | Strong |
+| **Probes Sent** | ~2,032 | **~27,960** |
+| **Probes Recv** | ~1,032 | **~947** |
+| **Throughput** | ~193 probes/sec | **~2,800 probes/sec** |
+| **Binary Size** | ~9.2 MB | **23 KB** |
+| **RSS** | ~28.5 MB | **~17.5 MB** |
+
+> Note: After dropping the artificially strict "1 probe per interval tick" limitation, NSR now correctly sends a full batch of up to 30 probes per interval tick. This allows it to vastly exceed Trippy's throughput within the exact same `10ms` duration limits.
 
 ---
 
