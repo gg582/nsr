@@ -1,8 +1,12 @@
+#ifndef _XOPEN_SOURCE_EXTENDED
 #define _XOPEN_SOURCE_EXTENDED
+#endif
 #include <nsr/tui.h>
 #include <ncursesw/curses.h>
 #include <locale.h>
 #include <ttak/timing/timing.h>
+#include <ttak/math/bigint.h>
+#include <ttak/mem/mem.h>
 
 ttak_result_t nsr_tui_init(void) {
     setlocale(LC_ALL, "");
@@ -44,6 +48,8 @@ static void draw_box(int y, int x, int h, int w, const char *title) {
     attroff(COLOR_PAIR(1));
 }
 
+static bool g_show_stats = false;
+
 void nsr_tui_render(nsr_omni_state_t *state) {
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
@@ -54,12 +60,48 @@ void nsr_tui_render(nsr_omni_state_t *state) {
     mvprintw(0, 2, "NSR NET MUSHROOM v0.1.0 (OMNI)");
     attroff(COLOR_PAIR(1) | A_BOLD);
     
-    uint64_t uptime_s = (ttak_get_tick_count_ns() / 1000 - state->start_time_us) / 1000000;
-    mvprintw(0, max_x - 25, "UPTIME: %lu s", uptime_s);
+    // Timeline-based memory management: Bind object lifetimes to the system clock duration
+    uint64_t now_ns = ttak_get_tick_count_ns();
+    
+    // Allocate BigInt objects with a explicit 1-second TTL on the timeline
+    ttak_bigint_t *bi_now = (ttak_bigint_t *)ttak_mem_alloc_with_flags(sizeof(ttak_bigint_t), TT_SECOND(1), now_ns, TTAK_MEM_STRICT_CHECK);
+    ttak_bigint_t *bi_start = (ttak_bigint_t *)ttak_mem_alloc_with_flags(sizeof(ttak_bigint_t), TT_SECOND(1), now_ns, TTAK_MEM_STRICT_CHECK);
+    ttak_bigint_t *bi_diff = (ttak_bigint_t *)ttak_mem_alloc_with_flags(sizeof(ttak_bigint_t), TT_SECOND(1), now_ns, TTAK_MEM_STRICT_CHECK);
+    ttak_bigint_t *bi_uptime = (ttak_bigint_t *)ttak_mem_alloc_with_flags(sizeof(ttak_bigint_t), TT_SECOND(1), now_ns, TTAK_MEM_STRICT_CHECK);
+
+    if (bi_now && bi_start && bi_diff && bi_uptime) {
+        ttak_bigint_init_u64(bi_now, now_ns / 1000, now_ns);
+        ttak_bigint_init_u64(bi_start, state->start_time_us, now_ns);
+        ttak_bigint_init(bi_diff, now_ns);
+        ttak_bigint_init(bi_uptime, now_ns);
+
+        // Safe subtraction handles precision and underflow via BigInt sign flag
+        ttak_bigint_sub(bi_diff, bi_now, bi_start, now_ns);
+        
+        // Convert microseconds to seconds (1,000,000 scale)
+        ttak_bigint_div_u64(bi_uptime, NULL, bi_diff, 1000000ULL, now_ns);
+
+        char *uptime_str = ttak_bigint_to_string(bi_uptime, now_ns);
+        if (uptime_str) {
+            mvprintw(0, max_x - 25, "UPTIME: %s s", uptime_str);
+        } else {
+            mvprintw(0, max_x - 25, "UPTIME: [MEM_FAULT]");
+        }
+    } else {
+        mvprintw(0, max_x - 25, "UPTIME: [TIMELINE_FAULT]");
+    }
+    
+    // Trigger timeline cleanup for expired objects
+    tt_autoclean_dirty_pointers(now_ns);
 
     // 2. Stats Panel
     draw_box(2, 2, 3, max_x - 5, "TARGET INFO");
-    mvprintw(3, 4, "DESTINATION: %s", state->target_ip[0] ? state->target_ip : "Scanning...");
+    mvprintw(3, 4, "DESTINATION: %-40s", state->target_ip[0] ? state->target_ip : "Scanning...");
+    if (g_show_stats) {
+        attron(COLOR_PAIR(2));
+        mvprintw(3, max_x - 30, "[STATS ACTIVE] SHM RING OK");
+        attroff(COLOR_PAIR(2));
+    }
 
     // 3. Trace Panel
     draw_box(6, 2, max_y - 9, max_x - 5, "TRACEROUTE");
@@ -112,10 +154,15 @@ void nsr_tui_render(nsr_omni_state_t *state) {
     refresh();
 }
 
-bool nsr_tui_update(void) {
+int nsr_tui_update(void) {
     int ch = getch();
-    if (ch == 'q' || ch == 'Q') return true;
-    return false;
+    if (ch == 'q' || ch == 'Q') return 1;
+    if (ch == 'p' || ch == 'P') return 2;
+    if (ch == 's' || ch == 'S') {
+        g_show_stats = !g_show_stats;
+        return 3;
+    }
+    return 0;
 }
 
 void nsr_tui_cleanup(void) {

@@ -23,6 +23,12 @@ typedef struct {
 
 static nsr_omni_state_t g_state;
 static nsr_hop_addr_cache_t g_addr_cache[NSR_MAX_HOPS];
+static volatile bool g_paused = false;
+
+static void handle_sigusr1(int sig) {
+    (void)sig;
+    g_paused = !g_paused;
+}
 
 static void update_state(uint8_t ttl, nsr_observation_t *obs) {
     if (ttl >= NSR_MAX_HOPS || ttl == 0) return;
@@ -54,6 +60,7 @@ static inline uint64_t compute_integrity_fast(uint8_t ttl, uint16_t seq) {
 }
 
 void nsr_omni_logic_omega(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, nsr_shm_ring_large_t *l2t) {
+    signal(SIGUSR1, handle_sigusr1);
     memset(&g_state, 0, sizeof(g_state));
     memset(g_addr_cache, 0, sizeof(g_addr_cache));
     g_state.start_time_us = ttak_get_tick_count_ns() / 1000;
@@ -66,23 +73,30 @@ void nsr_omni_logic_omega(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, nsr_shm_ring
     nsr_observation_t observations[LOGIC_BATCH];
 
     while (1) {
-        // [1] EMIT PROBE INTENT (Batching to SHM)
         uint64_t now_us = ttak_get_tick_count_ns() / 1000;
-        for (int i = 0; i < LOGIC_BATCH; i++) {
-            intents[i].ttl = current_ttl;
-            intents[i].seq = current_seq;
-            intents[i].action = 0;
-            intents[i].timestamp_us = now_us;
-            intents[i].integrity = compute_integrity_fast(current_ttl, current_seq);
+
+        // [1] EMIT PROBE INTENT (Batching to SHM)
+        if (!g_paused) {
+            for (int i = 0; i < LOGIC_BATCH; i++) {
+                intents[i].ttl = current_ttl;
+                intents[i].seq = current_seq;
+                intents[i].action = 0;
+                intents[i].timestamp_us = now_us;
+                intents[i].integrity = compute_integrity_fast(current_ttl, current_seq);
+                
+                g_state.hops[current_ttl].sent++;
+                current_seq++;
+                
+                current_ttl++;
+                if (__builtin_expect(current_ttl > 30, 0)) current_ttl = 1;
+            }
             
-            g_state.hops[current_ttl].sent++;
-            current_seq++;
-            
-            current_ttl++;
-            if (__builtin_expect(current_ttl > 30, 0)) current_ttl = 1;
+            while (!nsr_shm_ring_push_batch(l2g, intents, LOGIC_BATCH, sizeof(nsr_intent_t)));
+        } else {
+            // If paused, just sleep a bit to avoid busy wait
+            struct timespec ts = {0, 10000000}; // 10ms
+            nanosleep(&ts, NULL);
         }
-        
-        while (!nsr_shm_ring_push_batch(l2g, intents, LOGIC_BATCH, sizeof(nsr_intent_t)));
 
         // [2] DRAIN OBSERVATIONS (SHM Pop Batch)
         while (1) {

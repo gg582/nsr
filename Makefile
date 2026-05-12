@@ -17,7 +17,7 @@ CFLAGS = \
     -fstrict-aliasing \
     -fno-math-errno \
     -fno-asynchronous-unwind-tables \
-    -std=c23 \
+    -std=c2x \
     -D_XOPEN_SOURCE_EXTENDED
 LDFLAGS = \
     -L./lib/libttak \

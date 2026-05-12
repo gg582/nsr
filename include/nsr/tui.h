@@ -21,8 +21,8 @@ void nsr_tui_cleanup(void);
 
 /**
  * @brief Handles user input (non-blocking).
- * @return true if the app should quit.
+ * @return 0: No action, 1: Quit, 2: Pause Toggle, 3: Stats Toggle
  */
-bool nsr_tui_update(void);
+int nsr_tui_update(void);
 
 #endif
