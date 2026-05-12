@@ -83,12 +83,12 @@ void nsr_tui_render(nsr_omni_state_t *state) {
 
         char *uptime_str = ttak_bigint_to_string(bi_uptime, now_ns);
         if (uptime_str) {
-            mvprintw(0, max_x - 25, "UPTIME: %s s", uptime_str);
+            mvprintw(0, max_x - 45, "INTERVAL: %d ms  UPTIME: %s s", state->interval_ms, uptime_str);
         } else {
-            mvprintw(0, max_x - 25, "UPTIME: [MEM_FAULT]");
+            mvprintw(0, max_x - 45, "INTERVAL: %d ms  UPTIME: [MEM_FAULT]", state->interval_ms);
         }
     } else {
-        mvprintw(0, max_x - 25, "UPTIME: [TIMELINE_FAULT]");
+        mvprintw(0, max_x - 45, "INTERVAL: %d ms  UPTIME: [TIMELINE_FAULT]", state->interval_ms);
     }
     
     // Trigger timeline cleanup for expired objects
@@ -148,7 +148,7 @@ void nsr_tui_render(nsr_omni_state_t *state) {
     // 4. Footer
     attron(COLOR_PAIR(5));
     mvhline(max_y - 1, 0, ' ', max_x);
-    mvprintw(max_y - 1, 2, "[Q] Quit  [S] Settings  [P] Pause (NSR Omni Physical Isolation Active)");
+    mvprintw(max_y - 1, 2, "[Q] Quit  [S] Stats  [P] Pause  [+/-] Interval (NSR Omni Physical Isolation)");
     attroff(COLOR_PAIR(5));
 
     refresh();
@@ -162,6 +162,8 @@ int nsr_tui_update(void) {
         g_show_stats = !g_show_stats;
         return 3;
     }
+    if (ch == '+' || ch == '=') return 4;
+    if (ch == '-' || ch == '_') return 5;
     return 0;
 }
 

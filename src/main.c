@@ -39,22 +39,6 @@ void spawn_gatekeeper_omega(nsr_shm_ring_t *l2g, nsr_shm_ring_t *g2l, const char
     }
 }
 
-void spawn_logic_omega(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, nsr_shm_ring_large_t *l2t) {
-    g_logic_pid = fork();
-    if (g_logic_pid == 0) {
-        signal(SIGINT, SIG_DFL);
-        signal(SIGTERM, SIG_DFL);
-
-        cpu_set_t cpuset;
-        CPU_ZERO(&cpuset);
-        CPU_SET(2, &cpuset);
-        if (sched_setaffinity(0, sizeof(cpuset), &cpuset) < 0) perror("affinity");
-
-        nsr_omni_logic_omega(g2l, l2g, l2t);
-        exit(0);
-    }
-}
-
 #include <netdb.h>
 #include <arpa/inet.h>
 
@@ -103,7 +87,10 @@ int main(int argc, char **argv) {
     nsr_shm_ring_large_t *l2t = mmap(NULL, shm_large_size, PROT_READ | PROT_WRITE, 
                                      MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     
-    if (l2g == MAP_FAILED || g2l == MAP_FAILED || l2t == MAP_FAILED) {
+    nsr_config_t *config = mmap(NULL, sizeof(nsr_config_t), PROT_READ | PROT_WRITE,
+                                MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    
+    if (l2g == MAP_FAILED || g2l == MAP_FAILED || l2t == MAP_FAILED || config == MAP_FAILED) {
         perror("mmap");
         return EXIT_FAILURE;
     }
@@ -111,9 +98,17 @@ int main(int argc, char **argv) {
     memset(l2g, 0, shm_size);
     memset(g2l, 0, shm_size);
     memset(l2t, 0, shm_large_size);
+    atomic_init(&config->interval_ms, 50);
 
     spawn_gatekeeper_omega(l2g, g2l, target_ip);
-    spawn_logic_omega(g2l, l2g, l2t);
+    
+    // Updated spawn_logic_omega to take config (inline since it's small)
+    g_logic_pid = fork();
+    if (g_logic_pid == 0) {
+        signal(SIGINT, SIG_DFL); signal(SIGTERM, SIG_DFL);
+        nsr_omni_logic_omega(g2l, l2g, l2t, config);
+        exit(0);
+    }
 
     if (!silent) {
         nsr_tui_init();
@@ -124,6 +119,7 @@ int main(int argc, char **argv) {
     strncpy(last_state.target_ip, target_ip, sizeof(last_state.target_ip));
 
     while (g_running) {
+        // ... (waitpid logic) ...
         int status;
         pid_t exited_pid = waitpid(-1, &status, WNOHANG);
         if (exited_pid > 0) {
@@ -132,7 +128,12 @@ int main(int argc, char **argv) {
                 spawn_gatekeeper_omega(l2g, g2l, target_ip);
             } else if (exited_pid == g_logic_pid) {
                 if (!silent) fprintf(stderr, "[ULTRA] Logic Engine crashed! status=%d\n", status);
-                spawn_logic_omega(g2l, l2g, l2t);
+                g_logic_pid = fork();
+                if (g_logic_pid == 0) {
+                    signal(SIGINT, SIG_DFL); signal(SIGTERM, SIG_DFL);
+                    nsr_omni_logic_omega(g2l, l2g, l2t, config);
+                    exit(0);
+                }
             }
         }
 
@@ -146,10 +147,16 @@ int main(int argc, char **argv) {
             int cmd = nsr_tui_update();
             if (cmd == 1) break; // Quit
             if (cmd == 2) {
-                // Toggle pause in logic process
                 if (g_logic_pid > 0) kill(g_logic_pid, SIGUSR1);
             }
-            // cmd == 3 (Stats) is handled internally by TUI for display
+            if (cmd == 4) { // Increase interval
+                uint32_t current = atomic_load(&config->interval_ms);
+                if (current < 1000) atomic_store(&config->interval_ms, current + 10);
+            }
+            if (cmd == 5) { // Decrease interval
+                uint32_t current = atomic_load(&config->interval_ms);
+                if (current > 0) atomic_store(&config->interval_ms, current - 10);
+            }
         }
         
         struct timespec ts = {0, 16666666}; // 60fps check

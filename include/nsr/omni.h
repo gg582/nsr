@@ -45,6 +45,12 @@ typedef struct {
 #define NSR_INTEGRITY_KEY0 0xDEADC0DECAFEBABEULL
 #define NSR_INTEGRITY_KEY1 0xFEEDFACEBEEFCAFEULL
 
+#include <stdatomic.h>
+
+typedef struct {
+    atomic_uint interval_ms;
+} nsr_config_t;
+
 /**
  * @brief State shared with TUI for rendering.
  */
@@ -60,11 +66,12 @@ typedef struct {
     nsr_hop_info_t hops[NSR_MAX_HOPS];
     char target_ip[48];
     uint64_t start_time_us;
+    uint32_t interval_ms;
 } nsr_omni_state_t;
 
 #include <nsr/shm_ring.h>
 
 void nsr_omni_gatekeeper_omega(nsr_shm_ring_t *l2g, nsr_shm_ring_t *g2l, const char *target);
-void nsr_omni_logic_omega(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, nsr_shm_ring_large_t *l2t);
+void nsr_omni_logic_omega(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, nsr_shm_ring_large_t *l2t, nsr_config_t *config);
 
 #endif

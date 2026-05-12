@@ -33,14 +33,14 @@ void spawn_gatekeeper(nsr_shm_ring_t *l2g, nsr_shm_ring_t *g2l, const char *targ
     }
 }
 
-void spawn_logic(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, nsr_shm_ring_large_t *l2t) {
+void spawn_logic(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, nsr_shm_ring_large_t *l2t, nsr_config_t *config) {
     g_logic_pid = fork();
     if (g_logic_pid == 0) {
         cpu_set_t cpuset;
         CPU_ZERO(&cpuset);
         CPU_SET(2, &cpuset);
         sched_setaffinity(0, sizeof(cpuset), &cpuset);
-        nsr_omni_logic_omega(g2l, l2g, l2t);
+        nsr_omni_logic_omega(g2l, l2g, l2t, config);
         exit(0);
     }
 }
@@ -61,14 +61,22 @@ int main(int argc, char **argv) {
     nsr_shm_ring_t *l2g = mmap(NULL, shm_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     nsr_shm_ring_t *g2l = mmap(NULL, shm_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     nsr_shm_ring_large_t *l2t = mmap(NULL, shm_large_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    nsr_config_t *config = mmap(NULL, sizeof(nsr_config_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+
+    if (l2g == MAP_FAILED || g2l == MAP_FAILED || l2t == MAP_FAILED || config == MAP_FAILED) {
+        perror("mmap");
+        return EXIT_FAILURE;
+    }
+
     memset(l2g, 0, shm_size);
     memset(g2l, 0, shm_size);
     memset(l2t, 0, shm_large_size);
+    atomic_init(&config->interval_ms, 50);
 
     struct timespec start_ts, end_ts;
     clock_gettime(CLOCK_MONOTONIC, &start_ts);
     spawn_gatekeeper(l2g, g2l, argv[1]);
-    spawn_logic(g2l, l2g, l2t);
+    spawn_logic(g2l, l2g, l2t, config);
 
     nsr_omni_state_t last_state;
     memset(&last_state, 0, sizeof(last_state));

@@ -59,7 +59,7 @@ static inline uint64_t compute_integrity_fast(uint8_t ttl, uint16_t seq) {
     return ((uint64_t)ttl << 16) | (uint64_t)seq;
 }
 
-void nsr_omni_logic_omega(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, nsr_shm_ring_large_t *l2t) {
+void nsr_omni_logic_omega(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, nsr_shm_ring_large_t *l2t, nsr_config_t *config) {
     signal(SIGUSR1, handle_sigusr1);
     memset(&g_state, 0, sizeof(g_state));
     memset(g_addr_cache, 0, sizeof(g_addr_cache));
@@ -67,34 +67,42 @@ void nsr_omni_logic_omega(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, nsr_shm_ring
     
     uint8_t current_ttl = 1;
     uint16_t current_seq = 0;
+    uint64_t last_probe_us = 0;
 
     #define LOGIC_BATCH 1024
-    nsr_intent_t intents[LOGIC_BATCH];
     nsr_observation_t observations[LOGIC_BATCH];
 
     while (1) {
         uint64_t now_us = ttak_get_tick_count_ns() / 1000;
+        uint32_t interval_ms = atomic_load(&config->interval_ms);
+        g_state.interval_ms = interval_ms;
 
-        // [1] EMIT PROBE INTENT (Batching to SHM)
-        if (!g_paused) {
-            for (int i = 0; i < LOGIC_BATCH; i++) {
-                intents[i].ttl = current_ttl;
-                intents[i].seq = current_seq;
-                intents[i].action = 0;
-                intents[i].timestamp_us = now_us;
-                intents[i].integrity = compute_integrity_fast(current_ttl, current_seq);
-                
-                g_state.hops[current_ttl].sent++;
-                current_seq++;
-                
-                current_ttl++;
-                if (__builtin_expect(current_ttl > 30, 0)) current_ttl = 1;
-            }
+        // [1] EMIT PROBE INTENT (Throttled via Timeline Logic)
+        if (!g_paused && (now_us - last_probe_us >= (uint64_t)interval_ms * 1000)) {
+            // Send a small burst or single probe based on interval
+            // For NSR, we'll send one probe per interval tick to ensure strict pacing
+            nsr_intent_t intent;
+            intent.ttl = current_ttl;
+            intent.seq = current_seq;
+            intent.action = 0;
+            intent.timestamp_us = now_us;
+            intent.integrity = compute_integrity_fast(current_ttl, current_seq);
             
-            while (!nsr_shm_ring_push_batch(l2g, intents, LOGIC_BATCH, sizeof(nsr_intent_t)));
-        } else {
+            g_state.hops[current_ttl].sent++;
+            current_seq++;
+            
+            current_ttl++;
+            if (__builtin_expect(current_ttl > 30, 0)) current_ttl = 1;
+
+            while (!nsr_shm_ring_push_batch(l2g, &intent, 1, sizeof(nsr_intent_t)));
+            last_probe_us = now_us;
+        } else if (g_paused) {
             // If paused, just sleep a bit to avoid busy wait
             struct timespec ts = {0, 10000000}; // 10ms
+            nanosleep(&ts, NULL);
+        } else {
+            // Pacing sleep: wait for a fraction of the interval or 1ms
+            struct timespec ts = {0, 1000000}; // 1ms
             nanosleep(&ts, NULL);
         }
 
