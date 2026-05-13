@@ -1,33 +1,47 @@
 #ifndef NSR_TUI_H
 #define NSR_TUI_H
 
-#include <nsr/omni.h>
+#include <nsr/telemetry.h>
+#include <nsr/topology.h>
 #include <ttak/ttak_accelerator.h>
 
-/**
- * @brief Initializes the ncursesw interface.
- */
+typedef enum {
+    NSR_UI_NORMAL = 0,
+    NSR_UI_GRID,
+    NSR_UI_TREE,
+} nsr_ui_mode_t;
+
+#define NSR_UI_STACK_DEPTH 8
+
+typedef struct {
+    nsr_ui_mode_t modes[NSR_UI_STACK_DEPTH];
+    int count;
+} nsr_ui_stack_t;
+
+typedef struct {
+    nsr_ui_mode_t current_mode;
+    nsr_ui_stack_t nav_stack;
+
+    int grid_cursor;
+    int tree_cursor;
+    int tree_scroll;
+    int grid_scroll_x;
+    int grid_scroll_y;
+
+    uint32_t focused_node_id;
+    bool show_stats;
+    bool show_dashboard;
+
+    int last_max_y;
+    int last_max_x;
+} nsr_tui_state_t;
+
 ttak_result_t nsr_tui_init(void);
-
-/**
- * @brief Renders the current tracer state to the screen.
- */
-void nsr_tui_render(nsr_omni_state_t *state);
-
-/**
- * @brief Cleans up and restores the terminal.
- */
 void nsr_tui_cleanup(void);
 
-/**
- * @brief Handles user input (non-blocking).
- * @return 0: No action, 1: Quit, 2: Pause Toggle, 3: Stats Toggle, 4: Increase Interval, 5: Decrease Interval, 6: Toggle Dashboard
- */
-int nsr_tui_update(void);
+void nsr_tui_render(nsr_tui_state_t *tui, nsr_telemetry_state_t *tel, nsr_topology_state_t *topo);
+int nsr_tui_update(nsr_tui_state_t *tui, nsr_topology_state_t *topo);
 
-/**
- * @brief Toggles the visibility of the settings dashboard.
- */
-void nsr_tui_toggle_dashboard(void);
+void nsr_tui_toggle_dashboard(nsr_tui_state_t *tui);
 
 #endif

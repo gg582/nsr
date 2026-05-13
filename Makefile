@@ -30,34 +30,33 @@ LDFLAGS = \
     -Wl,--strip-all \
     -Wl,-Ofast
 
-OMNI_OBJ = $(OMNI_SRC:.c=.o)
-OMNI_SRC = src/main.c src/omni_gatekeeper.c src/omni_logic.c src/tui.c src/stubs.c
-SINGULAR_SRC = src/singular_broker.c src/singular_sender.c src/singular_receiver.c
+CORE_SRC = src/main.c src/gatekeeper.c src/logic.c src/tui.c src/topology.c src/stubs.c
+CORE_OBJ = $(CORE_SRC:.c=.o)
+
 BENCH_SRC = bench_nsr.c
 
-OMNI_CORE_OBJ = src/omni_gatekeeper.o src/omni_logic.o src/stubs.o src/tui.o
-
-TARGET = nsr_omni_bin
+TARGET = nsr
 BENCH_TARGET = nsr_bench
 BENCH_E2E_TARGET = nsr_bench_e2e
 
 all: $(TARGET) $(BENCH_TARGET) $(BENCH_E2E_TARGET)
 
-$(TARGET): $(OMNI_OBJ)
-	$(CC) $(OMNI_OBJ) -o $@ $(LDFLAGS)
+$(TARGET): $(CORE_OBJ)
+	$(CC) $(CORE_OBJ) -o $@ $(LDFLAGS)
 
 $(BENCH_TARGET): bench_nsr.c
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
-$(BENCH_E2E_TARGET): bench_nsr_e2e.c $(OMNI_CORE_OBJ)
+$(BENCH_E2E_TARGET): bench_nsr_e2e.c src/gatekeeper.o src/logic.o src/stubs.o src/tui.o src/topology.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
+
 install:
-	cp nsr_omni_bin /usr/local/bin/nsr
+	cp $(TARGET) /usr/local/bin/nsr
 
 clean:
-	rm -f src/*.o *.o $(TARGET) $(BENCH_TARGET)
+	rm -f src/*.o *.o $(TARGET) $(BENCH_TARGET) $(BENCH_E2E_TARGET)
 
 .PHONY: all clean

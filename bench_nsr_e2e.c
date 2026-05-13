@@ -1,5 +1,5 @@
 #define _GNU_SOURCE
-#include <nsr/omni.h>
+#include <nsr/telemetry.h>
 #include <ttak/timing/timing.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -16,36 +16,40 @@ static pid_t g_gk_pid = 0;
 static pid_t g_logic_pid = 0;
 static bool g_running = true;
 
-void signal_handler(int sig) {
+void signal_handler(int sig)
+{
     (void)sig;
     g_running = false;
 }
 
-void spawn_gatekeeper(nsr_shm_ring_t *l2g, nsr_shm_ring_t *g2l, const char *target) {
+void spawn_gatekeeper(nsr_shm_ring_t *l2g, nsr_shm_ring_t *g2l, const char *target)
+{
     g_gk_pid = fork();
     if (g_gk_pid == 0) {
         cpu_set_t cpuset;
         CPU_ZERO(&cpuset);
         CPU_SET(0, &cpuset);
         sched_setaffinity(0, sizeof(cpuset), &cpuset);
-        nsr_omni_gatekeeper_omega(l2g, g2l, target);
+        nsr_gatekeeper_run(l2g, g2l, target);
         exit(0);
     }
 }
 
-void spawn_logic(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, nsr_shm_ring_large_t *l2t, nsr_config_t *config) {
+void spawn_logic(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g, nsr_shm_ring_large_t *l2t, nsr_config_t *config)
+{
     g_logic_pid = fork();
     if (g_logic_pid == 0) {
         cpu_set_t cpuset;
         CPU_ZERO(&cpuset);
         CPU_SET(2, &cpuset);
         sched_setaffinity(0, sizeof(cpuset), &cpuset);
-        nsr_omni_logic_omega(g2l, l2g, l2t, config);
+        nsr_logic_run(g2l, l2g, l2t, config);
         exit(0);
     }
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv)
+{
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <target_ip> [duration_s] [interval_ms]\n", argv[0]);
         return EXIT_FAILURE;
@@ -82,21 +86,22 @@ int main(int argc, char **argv) {
     memset(g2l, 0, shm_size);
     memset(l2t, 0, shm_large_size);
     atomic_init(&config->interval_ms, interval_ms);
+    strncpy(config->target_ip, argv[1], sizeof(config->target_ip) - 1);
 
     struct timespec start_ts, end_ts;
     clock_gettime(CLOCK_MONOTONIC, &start_ts);
     spawn_gatekeeper(l2g, g2l, argv[1]);
     spawn_logic(g2l, l2g, l2t, config);
 
-    nsr_omni_state_t last_state;
+    nsr_telemetry_state_t last_state;
     memset(&last_state, 0, sizeof(last_state));
 
     while (g_running) {
-        nsr_omni_state_t new_state;
+        nsr_telemetry_state_t new_state;
         while (nsr_shm_ring_large_pop(l2t, &new_state, sizeof(new_state))) {
             memcpy(&last_state, &new_state, sizeof(last_state));
         }
-        struct timespec ts = {0, 100000000}; // 100ms
+        struct timespec ts = {0, 100000000};
         nanosleep(&ts, &ts);
     }
 

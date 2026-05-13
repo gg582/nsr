@@ -30,7 +30,7 @@ Each tier increases fault isolation while attempting to preserve practical trace
 
 ---
 
-## Tier 2: NSR Ultra (State Resilience)
+## Tier 2: Supervisor (State Resilience)
 
 ### Concept
 - Supervisor-worker model
@@ -46,7 +46,7 @@ Each tier increases fault isolation while attempting to preserve practical trace
 
 ---
 
-## Tier 3: NSR Singular (Privilege Separation)
+## Tier 3: Pipeline (Privilege Separation)
 
 ### Concept
 
@@ -75,7 +75,7 @@ Broker
 
 ---
 
-## Tier 4: NSR Omni (Intent Proxying)
+## Tier 4: Telemetry (Intent Proxying)
 
 ### Concept
 

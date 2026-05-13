@@ -1,9 +1,5 @@
-nsr_omni_bin
+nsr
+nsr_bench
+nsr_bench_e2e
+src/*.o
 *.o
-*.a
-*.so
-.DS_Store
-.vscode/
-.idea/
-build/
-bin/

@@ -18,14 +18,14 @@ NSR is a high-performance, **architecturally resilient** C23 implementation of a
 ```bash
 cd nsr
 make
-sudo ./nsr_omni_bin <target_ip>
+sudo ./nsr <target_ip>
 ````
 
 ### Example
 
 ```bash
-sudo ./nsr_omni_bin 8.8.8.8
-sudo ./nsr_omni_bin 2606:4700:4700::1111
+sudo ./nsr 8.8.8.8
+sudo ./nsr 2606:4700:4700::1111
 ```
 
 ---
@@ -35,11 +35,18 @@ sudo ./nsr_omni_bin 2606:4700:4700::1111
 * `Q` → Quit
 * `S` → Toggle statistics overlay
 * `P` → Pause / Resume tracing
+* `N` → Normal mode
+* `G` → Grid mode
+* `T` → Tree mode
+* `H/J/K/L` → Move cursor
+* `Enter` → Focus node
+* `C` → Toggle control-plane node
+* `Esc` → Back to previous view
 * `↑ / ↓` → Scroll hop list
 
 ---
 
-## Omni Architecture
+## Telemetry Architecture
 
 Unlike conventional single-process tracers such as Trippy, NSR intentionally separates responsibilities across isolated execution domains.
 
@@ -187,16 +194,21 @@ Memory behavior remains predictable.
 
 ## Tradeoffs
 
-NSR intentionally sacrifices some raw tracer throughput compared to Trippy in exchange for:
+NSR intentionally accepts additional architectural complexity in exchange for stronger isolation.
 
-* stronger process isolation
-* clearer fault boundaries
-* smaller binary footprint
-* experimentation with multi-process tracer architecture
+Compared to Trippy:
 
-This is not designed as a clone of existing Rust tracers.
+### NSR gains
+- smaller binaries
+- stronger fault boundaries
+- process isolation
+- recovery experimentation
+- multi-node topology observability
 
-It is a different systems experiment.
+### NSR loses
+- simpler architecture
+- easier maintenance
+- ecosystem maturity
 
 ---
 
@@ -204,9 +216,9 @@ It is a different systems experiment.
 
 NSR demonstrates that C can still produce modern network tooling that is:
 
-* extremely small
-* operationally fast
-* fault-isolated
-* structurally explicit
+- extremely small
+- operationally fast
+- fault-isolated
+- structurally explicit
 
 while remaining competitive with significantly heavier tracer implementations.
