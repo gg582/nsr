@@ -17,7 +17,7 @@ int main(void)
 
     uint64_t start = ttak_get_tick_count_ns();
     uint64_t count = 10000000;
-    uint64_t sum = 0;
+    volatile uint64_t sum = 0;
     for (uint64_t i = 0; i < count; i++) {
         sum += compute_integrity_fast((uint8_t)(i % 64), (uint16_t)i);
     }

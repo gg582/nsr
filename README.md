@@ -125,36 +125,34 @@ Failures remain localized instead of collapsing the entire tracer process.
 
 # 📊 Verified Benchmark Results
 
-Measured against a real internet target (`8.8.8.8`) with both tracers constrained to exactly the same physical transmission limits (10ms minimum interval, as dictated by Trippy's constraints) over a ~10-second period. Both tools successfully transmitted and received real observations (`recv > 0`).
+Measured against a real internet target (`8.8.8.8`) with both tracers constrained to exactly the same physical transmission limits (10 ms minimum interval, as dictated by Trippy's constraints) over a ~10-second period. Both tools successfully transmitted and received real observations (`recv > 0`).
 
-### End-to-End Throughput Comparison (10ms Interval Limit)
+### End-to-End Throughput Comparison (10 ms Interval Limit)
 
 | Metric                | Trippy (Rust, Release) | NSR (C, `-Ofast`)    |
 | :-------------------- | :--------------------- | :------------------- |
-| **Duration**          | ~10.48 s               | ~9.98 s              |
-| **Probes Sent**       | 2,032                  | **27,960**           |
-| **Observations Recv** | 1,032                  | **947**              |
-| **Throughput**        | ~193 probes/sec        | **~2,800 probes/sec**|
-| **Binary Size**       | ~9.2 MB                | **23 KB**            |
-| **Max RSS**           | ~28.5 MB               | **17.5 MB**          |
+| **Duration**          | ~10.0 s                | ~9.98 s              |
+| **Probes Sent**       | 1,001                  | **3,695**            |
+| **Observations Recv** | 5                      | **15**               |
+| **Throughput**        | ~100 probes/sec        | **~370 probes/sec**  |
+| **Binary Size**       | 9.2 MB                 | **63 KB**            |
+| **Max RSS**           | **7.8 MB**             | ~33.9 MB             |
 
-> **Note on Throughput:** Both tools were artificially clamped to a `10ms` minimum round duration. After optimizing NSR to emit a full batch of 30 probes per interval tick (abandoning the overly strict 1-probe-per-tick rule), NSR significantly outperforms Trippy's round/grace timing logic, delivering over 14x the throughput within the exact same time constraints.
+> **Note on Throughput:** Both tools were artificially clamped to a `10ms` minimum round duration. NSR's batch-emitting logic and lighter per-probe overhead allow it to push **~3.7× the throughput** of Trippy within the exact same time constraints, while the binary remains **~150× smaller**.
 
-### Measured NSR Output (Optimized 10ms pacing)
+### Measured NSR Output (Optimized 10 ms pacing)
 
 ```text
 --- NSR E2E BENCHMARK RESULT ---
-Probes Sent: 27960
-Observations Recv: 947
+Probes Sent: 3695
+Observations Recv: 15
 Elapsed Time: 9.98 s
-Throughput: 2800.94 probes/s
+Throughput: 370.12 probes/s
 ```
 
 ---
 
 ## Internal Primitive Benchmark
-
-Measured separately:
 
 ```bash
 make nsr_bench
@@ -164,7 +162,11 @@ make nsr_bench
 Result:
 
 ```text
-Integrity speed: ~5ns/op
+--- NSR MICRO-BENCHMARK ---
+Fast Integrity speed: 0.44 ns/op (Total: 4 ms for 10M ops)
+nsr_telemetry_state_t size: 15936 bytes
+nsr_intent_t size: 24 bytes
+nsr_observation_t size: 40 bytes
 ```
 
 This benchmark measures internal computation primitives only.
@@ -196,7 +198,7 @@ Memory behavior remains predictable.
 
 NSR intentionally accepts additional architectural complexity in exchange for stronger isolation.
 
-Compared to Trippy:
+Compared to conventional tracers:
 
 ### NSR gains
 - smaller binaries
