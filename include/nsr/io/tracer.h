@@ -1,6 +1,7 @@
 #ifndef NSR_TRACER_H
 #define NSR_TRACER_H
 
+#include <ttak/ttak_accelerator.h>
 #include <ttak/mem/abstract.h>
 #include <ttak/mem/owner.h>
 #include <ttak/mem/epoch.h>

@@ -1,4 +1,4 @@
-#include <nsr/singular.h>
+#include <nsr/io/singular.h>
 #include <ttak/net/core/icmp.h>
 #include <unistd.h>
 #include <sys/socket.h>

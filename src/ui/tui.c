@@ -1,7 +1,9 @@
 #ifndef _XOPEN_SOURCE_EXTENDED
 #define _XOPEN_SOURCE_EXTENDED
 #endif
-#include <nsr/tui.h>
+#include <nsr/ui/tui.h>
+#include <nsr/plugin/plugin.h>
+#include <nsr/json/json.h>
 #include <ncursesw/curses.h>
 #include <locale.h>
 #include <ttak/timing/timing.h>
@@ -10,6 +12,7 @@
 #include <string.h>
 #include <math.h>
 #include <stdio.h>
+#include <time.h>
 
 enum {
     CP_ACCENT = 1,
@@ -65,19 +68,109 @@ static void draw_box(int y, int x, int h, int w, const char *title)
     attroff(COLOR_PAIR(CP_ACCENT));
 }
 
-static void draw_footer(nsr_tui_state_t *tui, int max_y, int max_x)
+static void draw_footer(nsr_tui_state_t *tui, nsr_plugin_manager_t *plugins, int max_y, int max_x)
 {
-    (void)tui;
     attron(COLOR_PAIR(CP_HIGHLIGHT));
     mvhline(max_y - 1, 0, ' ', max_x);
-    mvprintw(max_y - 1, 2,
-             "[n] Normal  [g] Grid  [t] Tree  [h/j/k/l] Move  [Enter] Focus  [c] Control-Plane  [Esc] Back  [q] Quit");
-    if (tui->show_dashboard) {
-        mvprintw(max_y - 1, max_x - 18, "[D] Close Settings");
+
+    bool has_modal = false;
+    bool sniffer_enabled = false;
+    if (plugins) {
+        for (int i = 0; i < plugins->registry.count; i++) {
+            nsr_plugin_entry_t *e = &plugins->registry.entries[i];
+            if (strcmp(e->name, "sniffer") == 0) {
+                sniffer_enabled = e->enabled;
+            }
+            if (e->enabled && e->initialized && !e->dead && e->last_render_resp.len > 0) {
+                size_t mlen;
+                const char *res = nsr_json_obj_get(nsr_json_cstr(&e->last_render_resp), "result", &mlen);
+                if (res) {
+                    const char *mv = nsr_json_obj_get(res, "is_modal", &mlen);
+                    if (mv) {
+                        bool im = false;
+                        nsr_json_parse_bool(mv, mlen, &im);
+                        if (im) has_modal = true;
+                    }
+                }
+            }
+        }
+    }
+
+    char buf[512];
+    if (has_modal) {
+        snprintf(buf, sizeof(buf),
+                 "[Up/Down] Focus Field  [Left/Right] Protocol  [Enter][Enter] Apply & Close  [Esc] Cancel");
+        mvprintw(max_y - 1, 2, "%.*s", max_x - 4, buf);
     } else {
-        mvprintw(max_y - 1, max_x - 18, "[D] Settings");
+        if (max_x < 110) {
+            snprintf(buf, sizeof(buf),
+                     "[%c] Normal  [%c] Grid  [%c] Tools  [%c] Tree  [%c] Freeze  [%c] Quit",
+                     tui->keys.vt->label_char(&tui->keys, 'n'),
+                     tui->keys.vt->label_char(&tui->keys, 'g'),
+                     tui->keys.vt->label_char(&tui->keys, 'm'),
+                     tui->keys.vt->label_char(&tui->keys, 't'),
+                     tui->keys.vt->label_char(&tui->keys, 'p'),
+                     tui->keys.vt->label_char(&tui->keys, 'q'));
+        } else {
+            snprintf(buf, sizeof(buf),
+                     "[%c] Normal  [%c] Grid  [%c] Tools  [%c] Tree  [h/j/k/l] Move  [Enter] Focus  [%c] Freeze  [%c] Quit",
+                     tui->keys.vt->label_char(&tui->keys, 'n'),
+                     tui->keys.vt->label_char(&tui->keys, 'g'),
+                     tui->keys.vt->label_char(&tui->keys, 'm'),
+                     tui->keys.vt->label_char(&tui->keys, 't'),
+                     tui->keys.vt->label_char(&tui->keys, 'p'),
+                     tui->keys.vt->label_char(&tui->keys, 'q'));
+        }
+        
+        if (sniffer_enabled) {
+            int len = (int)strlen(buf);
+            if (max_x - len > 50) {
+                strncat(buf, "  [a][a] Inspect settings  [s] Last packet  [f] Sniff", sizeof(buf) - len - 1);
+            }
+        }
+        
+        mvprintw(max_y - 1, 2, "%.*s", max_x - 21, buf);
+
+        if (tui->show_dashboard) {
+            mvprintw(max_y - 1, max_x - 18, "[%c] Close Settings", tui->keys.vt->label_char(&tui->keys, 'd'));
+        } else {
+            mvprintw(max_y - 1, max_x - 18, "[%c] Settings", tui->keys.vt->label_char(&tui->keys, 'd'));
+        }
     }
     attroff(COLOR_PAIR(CP_HIGHLIGHT));
+}
+
+static void show_tui_msg(nsr_tui_state_t *tui, const char *text, int seconds)
+{
+    strncpy(tui->msg, text, sizeof(tui->msg) - 1);
+    tui->msg[sizeof(tui->msg) - 1] = '\0';
+    tui->msg_until = time(NULL) + seconds;
+}
+
+static void draw_notice(nsr_tui_state_t *tui, int max_y, int max_x)
+{
+    if (tui->msg[0] == '\0' || time(NULL) >= tui->msg_until) {
+        tui->msg[0] = '\0';
+        return;
+    }
+    int len = (int)strlen(tui->msg);
+    int w = len + 4;
+    int h = 3;
+    if (w > max_x)
+        w = max_x;
+    if (w < 5)
+        w = 5;
+    int x = (max_x - w) / 2;
+    int y = (max_y - h) / 2;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+
+    for (int i = 0; i < h; i++)
+        mvhline(y + i, x, ' ', w);
+    draw_box(y, x, h, w, NULL);
+    attron(A_BOLD);
+    mvprintw(y + 1, x + 2, "%.*s", w - 4, tui->msg);
+    attroff(A_BOLD);
 }
 
 static void push_nav(nsr_tui_state_t *tui, nsr_ui_mode_t mode)
@@ -142,15 +235,23 @@ static int health_pair_for_node(const nsr_topology_node_t *node)
     return CP_HEALTH_UNREACHABLE;
 }
 
-static void render_normal(nsr_tui_state_t *tui, nsr_telemetry_state_t *state)
+static void render_normal(nsr_tui_state_t *tui, nsr_telemetry_state_t *state,
+                          nsr_topology_state_t *topo,
+                          nsr_plugin_manager_t *plugins)
 {
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
     erase();
 
     attron(COLOR_PAIR(CP_ACCENT) | A_BOLD);
-    mvprintw(0, 2, "NSR NET MUSHROOM v0.1.0");
+    mvprintw(0, 2, "NSR: the Network Diagnosis Tool");
     attroff(COLOR_PAIR(CP_ACCENT) | A_BOLD);
+
+    if (tui->frozen) {
+        attron(COLOR_PAIR(CP_HEALTH_CRITICAL) | A_BOLD);
+        mvprintw(0, max_x - 14, "[FROZEN]");
+        attroff(COLOR_PAIR(CP_HEALTH_CRITICAL) | A_BOLD);
+    }
 
     uint64_t now_ns = ttak_get_tick_count_ns();
 
@@ -196,6 +297,12 @@ static void render_normal(nsr_tui_state_t *tui, nsr_telemetry_state_t *state)
     mvprintw(7, 4, "HOP  ADDRESS / STATUS          RTT      SENT  RECV  LOSS");
     attroff(A_UNDERLINE | A_BOLD);
 
+    nsr_hop_annotation_t annotations[NSR_MAX_HOPS];
+    int ann_count = 0;
+    if (plugins)
+        ann_count = plugins->vt->render_hops(plugins, state->hops, NSR_MAX_HOPS,
+                                            annotations, NSR_MAX_HOPS);
+
     for (int i = 1; i < NSR_MAX_HOPS; i++) {
         nsr_hop_info_t *h = &state->hops[i];
         int row = 7 + i;
@@ -239,7 +346,18 @@ static void render_normal(nsr_tui_state_t *tui, nsr_telemetry_state_t *state)
             break;
         }
         mvprintw(row, 44, "%4u  %4u  %3.0f%%", h->sent, h->recv, loss);
+
+        for (int a = 0; a < ann_count; a++) {
+            if (annotations[a].hop_idx == i) {
+                mvprintw(row, 56, "%s", annotations[a].text);
+                break;
+            }
+        }
     }
+
+    if (plugins)
+        plugins->vt->render(plugins, tui, topo, 9, max_x - 55, max_y - 12, 38,
+                            max_y, max_x);
 
     if (tui->show_dashboard) {
         int w = 50;
@@ -254,14 +372,15 @@ static void render_normal(nsr_tui_state_t *tui, nsr_telemetry_state_t *state)
         mvprintw(y + 2, x + 2, "Tracer Settings:");
         attroff(A_BOLD);
         mvprintw(y + 4, x + 2, "[+/-] Minimum Round Duration (-i): %d ms", state->interval_ms);
-        mvprintw(y + 6, x + 2, "Press [D] to close");
+        mvprintw(y + 6, x + 2, "Press [%c] to close", tui->keys.vt->label_char(&tui->keys, 'd'));
     }
 
-    draw_footer(tui, max_y, max_x);
+    draw_footer(tui, plugins, max_y, max_x);
     refresh();
 }
 
-static void render_grid(nsr_tui_state_t *tui, nsr_topology_state_t *topo)
+static void render_grid(nsr_tui_state_t *tui, nsr_topology_state_t *topo,
+                        nsr_plugin_manager_t *plugins)
 {
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
@@ -270,6 +389,12 @@ static void render_grid(nsr_tui_state_t *tui, nsr_topology_state_t *topo)
     attron(COLOR_PAIR(CP_ACCENT) | A_BOLD);
     mvprintw(0, 2, "TOPOLOGY GRID");
     attroff(COLOR_PAIR(CP_ACCENT) | A_BOLD);
+
+    if (tui->frozen) {
+        attron(COLOR_PAIR(CP_HEALTH_CRITICAL) | A_BOLD);
+        mvprintw(0, max_x - 14, "[FROZEN]");
+        attroff(COLOR_PAIR(CP_HEALTH_CRITICAL) | A_BOLD);
+    }
 
     int cols = max_x / 14;
     if (cols < 1)
@@ -343,11 +468,16 @@ static void render_grid(nsr_tui_state_t *tui, nsr_topology_state_t *topo)
     if (total == 0)
         mvprintw(start_y, start_x, "No nodes discovered yet.");
 
-    draw_footer(tui, max_y, max_x);
+    if (plugins)
+        plugins->vt->render(plugins, tui, topo, 9, max_x - 55, max_y - 12, 38,
+                            max_y, max_x);
+
+    draw_footer(tui, plugins, max_y, max_x);
     refresh();
 }
 
-static void render_tree(nsr_tui_state_t *tui, nsr_topology_state_t *topo)
+static void render_tree(nsr_tui_state_t *tui, nsr_topology_state_t *topo,
+                        nsr_plugin_manager_t *plugins)
 {
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
@@ -356,6 +486,12 @@ static void render_tree(nsr_tui_state_t *tui, nsr_topology_state_t *topo)
     attron(COLOR_PAIR(CP_ACCENT) | A_BOLD);
     mvprintw(0, 2, "TOPOLOGY TREE");
     attroff(COLOR_PAIR(CP_ACCENT) | A_BOLD);
+
+    if (tui->frozen) {
+        attron(COLOR_PAIR(CP_HEALTH_CRITICAL) | A_BOLD);
+        mvprintw(0, max_x - 14, "[FROZEN]");
+        attroff(COLOR_PAIR(CP_HEALTH_CRITICAL) | A_BOLD);
+    }
 
     int start_y = 2;
     int start_x = 2;
@@ -489,41 +625,186 @@ static void render_tree(nsr_tui_state_t *tui, nsr_topology_state_t *topo)
     if (total == 0)
         mvprintw(start_y, start_x, "No nodes discovered yet.");
 
-    draw_footer(tui, max_y, max_x);
+    if (plugins)
+        plugins->vt->render(plugins, tui, topo, 9, max_x - 55, max_y - 12, 38,
+                            max_y, max_x);
+
+    draw_footer(tui, plugins, max_y, max_x);
     refresh();
 }
 
-void nsr_tui_render(nsr_tui_state_t *tui, nsr_telemetry_state_t *tel, nsr_topology_state_t *topo)
+static void render_tools(nsr_tui_state_t *tui, nsr_plugin_manager_t *plugins)
 {
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    erase();
+
+    attron(COLOR_PAIR(CP_ACCENT) | A_BOLD);
+    mvprintw(0, 2, "TOOLS MENU");
+    attroff(COLOR_PAIR(CP_ACCENT) | A_BOLD);
+
+    int w = 64;
+    int h = max_y - 8;
+    if (h < 10) h = 10;
+    int y = (max_y - h) / 2;
+    int x = (max_x - w) / 2;
+
+    for (int i = 0; i < h; i++)
+        mvhline(y + i, x, ' ', w);
+    draw_box(y, x, h, w, "PLUGINS");
+
+    int count = plugins ? plugins->vt->count(plugins) : 0;
+
+    if (tui->tools_cursor < 0) tui->tools_cursor = 0;
+    if (count > 0 && tui->tools_cursor >= count) tui->tools_cursor = count - 1;
+    if (tui->tools_cursor < 0) tui->tools_cursor = 0;
+
+    int avail = h - 4;
+    if (tui->tools_cursor < tui->tools_scroll)
+        tui->tools_scroll = tui->tools_cursor;
+    if (tui->tools_cursor >= tui->tools_scroll + avail)
+        tui->tools_scroll = tui->tools_cursor - avail + 1;
+    if (tui->tools_scroll < 0) tui->tools_scroll = 0;
+
+    if (count == 0) {
+        mvprintw(y + 2, x + 2, "No plugins loaded.");
+    } else {
+        for (int i = 0; i < avail && i + tui->tools_scroll < count; i++) {
+            int idx = i + tui->tools_scroll;
+            int row = y + 2 + i;
+            bool sel = (idx == tui->tools_cursor);
+            if (sel)
+                attron(COLOR_PAIR(CP_HIGHLIGHT));
+            mvprintw(row, x + 2, "[%c] %-30s",
+                     plugins->vt->enabled(plugins, idx) ? 'x' : ' ',
+                     plugins->vt->name(plugins, idx));
+            if (sel)
+                attroff(COLOR_PAIR(CP_HIGHLIGHT));
+        }
+
+        int sel = tui->tools_cursor;
+        if (sel >= 0 && sel < count) {
+            const char *desc = plugins->vt->description(plugins, sel);
+            if (desc) {
+                attron(A_BOLD);
+                mvprintw(y + h - 2, x + 2, "%% %s", desc);
+                attroff(A_BOLD);
+            }
+        }
+    }
+
+    mvprintw(max_y - 3, x, "[j/k] Move  [Enter] Toggle  [Esc/q] Back");
+
+    draw_footer(tui, plugins, max_y, max_x);
+    refresh();
+}
+
+void nsr_tui_render(nsr_tui_state_t *tui, nsr_telemetry_state_t *tel,
+                    nsr_topology_state_t *topo, nsr_plugin_manager_t *plugins)
+{
+    if (tui->frozen && tui->current_mode != NSR_UI_TOOLS) {
+        /* Keep the previous frame intact. Only update the frozen badge. */
+        int max_y, max_x;
+        getmaxyx(stdscr, max_y, max_x);
+        (void)max_y;
+        attron(COLOR_PAIR(CP_HEALTH_CRITICAL) | A_BOLD);
+        mvprintw(0, max_x - 14, "[FROZEN]");
+        attroff(COLOR_PAIR(CP_HEALTH_CRITICAL) | A_BOLD);
+        refresh();
+        return;
+    }
+
     switch (tui->current_mode) {
     case NSR_UI_GRID:
-        render_grid(tui, topo);
+        render_grid(tui, topo, plugins);
         break;
     case NSR_UI_TREE:
-        render_tree(tui, topo);
+        render_tree(tui, topo, plugins);
+        break;
+    case NSR_UI_TOOLS:
+        render_tools(tui, plugins);
         break;
     default:
-        render_normal(tui, tel);
+        render_normal(tui, tel, topo, plugins);
         break;
+    }
+
+    {
+        int max_y, max_x;
+        getmaxyx(stdscr, max_y, max_x);
+        draw_notice(tui, max_y, max_x);
+        refresh();
     }
 }
 
-int nsr_tui_update(nsr_tui_state_t *tui, nsr_topology_state_t *topo)
+int nsr_tui_update(nsr_tui_state_t *tui, nsr_topology_state_t *topo,
+                   nsr_plugin_manager_t *plugins)
 {
     int ch = getch();
-    if (ch == 'q' || ch == 'Q')
+    if (tui->keys.vt->matches(&tui->keys, 'q', ch))
         return 1;
+    if (tui->keys.vt->matches(&tui->keys, 'd', ch)) {
+        if (tui->current_mode != NSR_UI_NORMAL) {
+            show_tui_msg(tui, "Please enter a dashboard at Normal Mode", 3);
+            return 0;
+        }
+        return 6;
+    }
 
-    if (ch == 'n' || ch == 'N') {
+    if (tui->current_mode == NSR_UI_TOOLS) {
+        int count = plugins ? plugins->vt->count(plugins) : 0;
+        switch (ch) {
+        case 'k':
+        case KEY_UP:
+            if (tui->tools_cursor > 0) tui->tools_cursor--;
+            break;
+        case 'j':
+        case KEY_DOWN:
+            if (tui->tools_cursor < count - 1) tui->tools_cursor++;
+            break;
+        case 'h':
+        case KEY_LEFT:
+            if (tui->tools_cursor > 0) tui->tools_cursor -= 5;
+            break;
+        case 'l':
+        case KEY_RIGHT:
+            if (tui->tools_cursor < count - 1) tui->tools_cursor += 5;
+            break;
+        case '\n':
+        case '\r':
+        case KEY_ENTER:
+            if (plugins && tui->tools_cursor >= 0 && tui->tools_cursor < count) {
+                bool en = plugins->vt->enabled(plugins, tui->tools_cursor);
+                plugins->vt->set_enabled(plugins, tui->tools_cursor, !en);
+            }
+            break;
+        case 27:
+        case 't':
+        case 'T':
+            if (ch == 27 || tui->keys.vt->matches(&tui->keys, 't', ch))
+                pop_nav(tui);
+            break;
+        }
+        if (tui->tools_cursor < 0) tui->tools_cursor = 0;
+        if (tui->tools_cursor >= count) tui->tools_cursor = count > 0 ? count - 1 : 0;
+        return 0;
+    }
+
+    if (tui->keys.vt->matches(&tui->keys, 'n', ch)) {
         goto_normal(tui);
         return 0;
     }
-    if (ch == 'g' || ch == 'G') {
+    if (tui->keys.vt->matches(&tui->keys, 'g', ch)) {
         if (tui->current_mode != NSR_UI_GRID)
             push_nav(tui, NSR_UI_GRID);
         return 0;
     }
-    if (ch == 't' || ch == 'T') {
+    if (tui->keys.vt->matches(&tui->keys, 'm', ch)) {
+        if (tui->current_mode != NSR_UI_TOOLS)
+            push_nav(tui, NSR_UI_TOOLS);
+        return 0;
+    }
+    if (tui->keys.vt->matches(&tui->keys, 't', ch)) {
         if (tui->current_mode != NSR_UI_TREE)
             push_nav(tui, NSR_UI_TREE);
         return 0;
@@ -532,6 +813,13 @@ int nsr_tui_update(nsr_tui_state_t *tui, nsr_topology_state_t *topo)
         pop_nav(tui);
         return 0;
     }
+    if (tui->keys.vt->matches(&tui->keys, 'p', ch)) {
+        tui->frozen = !tui->frozen;
+        return 0;
+    }
+
+    if (plugins && plugins->vt->on_key(plugins, ch))
+        return 0;
 
     int total = nsr_topology_active_count(topo);
 
@@ -625,9 +913,9 @@ int nsr_tui_update(nsr_tui_state_t *tui, nsr_topology_state_t *topo)
         if (tui->tree_cursor >= total)
             tui->tree_cursor = total - 1;
     } else {
-        if (ch == 'p' || ch == 'P')
+        if (tui->keys.vt->matches(&tui->keys, 'z', ch))
             return 2;
-        if (ch == 's' || ch == 'S') {
+        if (ch == 'S') {
             tui->show_stats = !tui->show_stats;
             return 3;
         }
@@ -635,10 +923,6 @@ int nsr_tui_update(nsr_tui_state_t *tui, nsr_topology_state_t *topo)
             return 4;
         if (ch == '-' || ch == '_')
             return 5;
-        if (ch == 'd' || ch == 'D') {
-            tui->show_dashboard = !tui->show_dashboard;
-            return 6;
-        }
     }
     return 0;
 }
@@ -652,3 +936,47 @@ void nsr_tui_cleanup(void)
 {
     endwin();
 }
+
+/* ============================================================
+ * Pseudo-OOP TUI driver implementation.
+ * ============================================================ */
+
+static ttak_result_t tui_driver_init(nsr_tui_driver_t *self)
+{
+    (void)self;
+    return nsr_tui_init();
+}
+
+static void tui_driver_cleanup(nsr_tui_driver_t *self)
+{
+    (void)self;
+    nsr_tui_cleanup();
+}
+
+static void tui_driver_render(nsr_tui_driver_t *self,
+                              nsr_telemetry_state_t *tel,
+                              nsr_topology_state_t *topo,
+                              nsr_plugin_manager_t *plugins)
+{
+    nsr_tui_render(&self->state, tel, topo, plugins);
+}
+
+static int tui_driver_update(nsr_tui_driver_t *self,
+                             nsr_topology_state_t *topo,
+                             nsr_plugin_manager_t *plugins)
+{
+    return nsr_tui_update(&self->state, topo, plugins);
+}
+
+static void tui_driver_toggle_dashboard(nsr_tui_driver_t *self)
+{
+    nsr_tui_toggle_dashboard(&self->state);
+}
+
+const struct nsr_tui_driver_vtable nsr_tui_driver_vtable = {
+    .init = tui_driver_init,
+    .cleanup = tui_driver_cleanup,
+    .render = tui_driver_render,
+    .update = tui_driver_update,
+    .toggle_dashboard = tui_driver_toggle_dashboard,
+};

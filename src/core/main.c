@@ -1,8 +1,8 @@
-#define _GNU_SOURCE
 #define _XOPEN_SOURCE 700
 #include <nsr/telemetry.h>
-#include <nsr/tui.h>
-#include <nsr/topology.h>
+#include <nsr/ui/tui.h>
+#include <nsr/state/topology.h>
+#include <nsr/plugin/plugin.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -17,6 +17,7 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <getopt.h>
+#include <pwd.h>
 
 #define NSR_MAX_TARGETS 8
 
@@ -27,6 +28,7 @@ typedef struct {
     pid_t gk_pid;
     pid_t logic_pid;
     char target_ip[64];
+    char target_host[128];
     bool active;
 } nsr_session_t;
 
@@ -34,10 +36,58 @@ static nsr_session_t g_sessions[NSR_MAX_TARGETS];
 static int g_num_sessions = 0;
 static bool g_running = true;
 
+static nsr_plugin_manager_t g_plugin_mgr;
+
 static void signal_handler(int sig)
 {
     (void)sig;
     g_running = false;
+}
+
+static const char *nsr_config_path(void)
+{
+    static char path[256];
+    const char *home = getenv("HOME");
+
+    if (!home || !home[0]) {
+        if (getuid() == 0) {
+            const char *sudo_user = getenv("SUDO_USER");
+            if (sudo_user && sudo_user[0]) {
+                struct passwd *pw = getpwnam(sudo_user);
+                if (pw && pw->pw_dir && pw->pw_dir[0])
+                    home = pw->pw_dir;
+            }
+        }
+        if (!home || !home[0])
+            home = "/tmp";
+    }
+
+    snprintf(path, sizeof(path), "%s/.nsrconfig", home);
+    return path;
+}
+
+static void nsr_plugins_load_from_home(const char *home)
+{
+    if (!home || !home[0])
+        return;
+    char dir[512];
+    snprintf(dir, sizeof(dir), "%s/.nsr/plugins", home);
+    g_plugin_mgr.vt->load_dir(&g_plugin_mgr, dir);
+}
+
+static void nsr_plugins_load_user_dir(void)
+{
+    const char *home = getenv("HOME");
+    nsr_plugins_load_from_home(home);
+
+    if (getuid() == 0) {
+        const char *sudo_user = getenv("SUDO_USER");
+        if (sudo_user && sudo_user[0]) {
+            struct passwd *pw = getpwnam(sudo_user);
+            if (pw && pw->pw_dir && pw->pw_dir[0])
+                nsr_plugins_load_from_home(pw->pw_dir);
+        }
+    }
 }
 
 static void spawn_gatekeeper(nsr_session_t *sess)
@@ -121,6 +171,10 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
+    g_plugin_mgr.vt = &nsr_plugin_manager_vtable;
+    g_plugin_mgr.vt->init(&g_plugin_mgr, nsr_config_path());
+    nsr_plugins_load_user_dir();
+
     for (int i = optind; i < argc && g_num_sessions < NSR_MAX_TARGETS; i++) {
         char ip[64];
         if (!resolve_target(argv[i], ip, sizeof(ip))) {
@@ -131,6 +185,7 @@ int main(int argc, char **argv)
         nsr_session_t *sess = &g_sessions[g_num_sessions];
         memset(sess, 0, sizeof(*sess));
         strncpy(sess->target_ip, ip, sizeof(sess->target_ip) - 1);
+        strncpy(sess->target_host, argv[i], sizeof(sess->target_host) - 1);
         sess->active = true;
 
         size_t shm_size = sizeof(nsr_shm_ring_t);
@@ -161,6 +216,7 @@ int main(int argc, char **argv)
                                         MAP_SHARED | MAP_ANONYMOUS, -1, 0);
             atomic_init(&config->interval_ms, interval_ms);
             strncpy(config->target_ip, sess->target_ip, sizeof(config->target_ip) - 1);
+            strncpy(config->target_host, sess->target_host, sizeof(config->target_host) - 1);
             nsr_logic_run(sess->g2l, sess->l2g, sess->l2t, config);
             exit(0);
         }
@@ -177,15 +233,20 @@ int main(int argc, char **argv)
     signal(SIGTERM, signal_handler);
     signal(SIGUSR1, SIG_IGN);
 
-    nsr_topology_state_t topology;
-    nsr_topology_init(&topology);
+    nsr_topology_manager_t topo_mgr;
+    memset(&topo_mgr, 0, sizeof(topo_mgr));
+    topo_mgr.vt = &nsr_topology_manager_vtable;
+    topo_mgr.vt->init(&topo_mgr);
 
-    nsr_tui_state_t tui_state;
-    memset(&tui_state, 0, sizeof(tui_state));
-    tui_state.current_mode = NSR_UI_NORMAL;
+    nsr_tui_driver_t tui_driver;
+    memset(&tui_driver, 0, sizeof(tui_driver));
+    tui_driver.state.current_mode = NSR_UI_NORMAL;
 
     if (!silent) {
-        nsr_tui_init();
+        tui_driver.vt = &nsr_tui_driver_vtable;
+        tui_driver.vt->init(&tui_driver);
+        tui_driver.state.keys.vt = &nsr_key_manager_vtable;
+        tui_driver.state.keys.vt->init(&tui_driver.state.keys, &g_plugin_mgr);
     }
 
     nsr_telemetry_state_t last_state;
@@ -214,6 +275,7 @@ int main(int argc, char **argv)
                                                     MAP_SHARED | MAP_ANONYMOUS, -1, 0);
                         atomic_init(&config->interval_ms, interval_ms);
                         strncpy(config->target_ip, sess->target_ip, sizeof(config->target_ip) - 1);
+                        strncpy(config->target_host, sess->target_host, sizeof(config->target_host) - 1);
                         nsr_logic_run(sess->g2l, sess->l2g, sess->l2t, config);
                         exit(0);
                     }
@@ -226,13 +288,15 @@ int main(int argc, char **argv)
             nsr_telemetry_state_t new_state;
             while (nsr_shm_ring_large_pop(sess->l2t, &new_state, sizeof(new_state))) {
                 memcpy(&last_state, &new_state, sizeof(last_state));
-                nsr_topology_update_from_telemetry(&topology, &last_state);
+                nsr_topology_update_from_telemetry(&topo_mgr.state, &last_state);
             }
         }
 
+        g_plugin_mgr.vt->update_telemetry(&g_plugin_mgr, &last_state, &topo_mgr.state);
+
         if (!silent) {
-            nsr_tui_render(&tui_state, &last_state, &topology);
-            int cmd = nsr_tui_update(&tui_state, &topology);
+            tui_driver.vt->render(&tui_driver, &last_state, &topo_mgr.state, &g_plugin_mgr);
+            int cmd = tui_driver.vt->update(&tui_driver, &topo_mgr.state, &g_plugin_mgr);
             if (cmd == 1)
                 break;
             if (cmd == 2) {
@@ -253,7 +317,7 @@ int main(int argc, char **argv)
                 }
             }
             if (cmd == 6) {
-                nsr_tui_toggle_dashboard(&tui_state);
+                tui_driver.vt->toggle_dashboard(&tui_driver);
             }
         }
 
@@ -262,7 +326,7 @@ int main(int argc, char **argv)
     }
 
     if (!silent)
-        nsr_tui_cleanup();
+        tui_driver.vt->cleanup(&tui_driver);
 
     for (int s = 0; s < g_num_sessions; s++) {
         nsr_session_t *sess = &g_sessions[s];
@@ -278,6 +342,8 @@ int main(int argc, char **argv)
         if (sess->logic_pid > 0)
             waitpid(sess->logic_pid, NULL, 0);
     }
+
+    g_plugin_mgr.vt->cleanup(&g_plugin_mgr);
 
     return 0;
 }

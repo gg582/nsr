@@ -1,4 +1,4 @@
-#include <nsr/topology.h>
+#include <nsr/state/topology.h>
 #include <ttak/timing/timing.h>
 #include <string.h>
 #include <math.h>
@@ -209,3 +209,29 @@ float nsr_health_score(const nsr_node_health_t *h)
 
     return loss_factor * 0.50f + rtt_factor * 0.20f + jitter_factor * 0.15f + inst_factor * 0.15f;
 }
+
+/* ============================================================
+ * Pseudo-OOP topology manager implementation.
+ * ============================================================ */
+
+static void topo_mgr_init(nsr_topology_manager_t *self)
+{
+    nsr_topology_init(&self->state);
+}
+
+static void topo_mgr_update_from_telemetry(nsr_topology_manager_t *self,
+                                           const nsr_telemetry_state_t *tel)
+{
+    nsr_topology_update_from_telemetry(&self->state, tel);
+}
+
+static int topo_mgr_active_count(const nsr_topology_manager_t *self)
+{
+    return nsr_topology_active_count(&self->state);
+}
+
+const struct nsr_topology_manager_vtable nsr_topology_manager_vtable = {
+    .init = topo_mgr_init,
+    .update_from_telemetry = topo_mgr_update_from_telemetry,
+    .active_count = topo_mgr_active_count,
+};

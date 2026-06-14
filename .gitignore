@@ -1,5 +1,8 @@
-nsr
-nsr_bench
-nsr_bench_e2e
+/nsr
+/nsr_bench
+/nsr_bench_e2e
 src/*.o
+plugins/*/*.o
+plugins/geoip/geoip
+plugins/percentile/percentile
 *.o

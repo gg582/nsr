@@ -203,6 +203,8 @@ void nsr_logic_run(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g,
     memset(g_last_recv_us, 0, sizeof(g_last_recv_us));
     if (config && config->target_ip[0])
         strncpy(g_state.target_ip, config->target_ip, sizeof(g_state.target_ip) - 1);
+    if (config && config->target_host[0])
+        strncpy(g_state.target_host, config->target_host, sizeof(g_state.target_host) - 1);
     g_state.start_time_us = ttak_get_tick_count_ns() / 1000;
 
     uint8_t  current_ttl = 1;

@@ -1,4 +1,4 @@
-#include <nsr/singular.h>
+#include <nsr/io/singular.h>
 #include <ttak/timing/timing.h>
 #include <unistd.h>
 #include <string.h>

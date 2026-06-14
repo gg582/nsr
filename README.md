@@ -20,25 +20,59 @@ NSR is a high-performance, **architecturally resilient** C23 implementation of a
 
 ## 🚀 Usage Guide
 
-### Build Requirements
-- GCC 13+
-- `ncursesw`
-- `libpthread`
-- Linux raw socket capability (`sudo` required for ICMP mode)
+### Build Requirements & Dependencies
+To build NSR and its plugins (including the packet sniffer which depends on `libcurl`), you must install the development libraries for your distribution:
+
+* **Debian / Ubuntu**:
+  ```bash
+  sudo apt update
+  sudo apt install build-essential libncursesw5-dev libcurl4-openssl-dev
+  ```
+* **RHEL / Fedora / Rocky Linux**:
+  ```bash
+  sudo dnf groupinstall "Development Tools"
+  sudo dnf install ncurses-devel libcurl-devel
+  ```
+* **Arch Linux**:
+  ```bash
+  sudo pacman -Syu base-devel ncurses curl
+  ```
+* **Alpine Linux**:
+  ```bash
+  sudo apk add build-base ncurses-dev curl-dev
+  ```
+
+Linux raw socket capability is required (`sudo` required for ICMP traceroute and packet sniffing).
 
 ```bash
 cd nsr
 git submodule init
 git submodule update --recursive
 make
-sudo ./nsr <target_ip>
+sudo -E ./nsr <target_ip>
 ````
+
+### Plugins
+
+Built-in plugins live in `plugins/` and are installed into `~/.nsr/plugins/`:
+
+```bash
+make plugins-install
+sudo -E ./nsr <target_ip>
+```
+
+Press `T` in the TUI to open the Tools menu and toggle plugins on/off.
+
+> **Note:** Use `sudo -E` (or `sudo --preserve-env=HOME`) so that `nsr` keeps
+> your original `$HOME` and can find plugins/config under `~/.nsr/plugins/` and
+> `~/.nsrconfig`. Without `-E`, `sudo` resets `HOME` to `/root`, which can cause
+> plugins such as `geoip` to fail to load.
 
 ### Example
 
 ```bash
-sudo ./nsr 8.8.8.8
-sudo ./nsr 2606:4700:4700::1111
+sudo -E ./nsr 8.8.8.8
+sudo -E ./nsr 2606:4700:4700::1111
 ```
 
 ---
@@ -47,12 +81,14 @@ sudo ./nsr 2606:4700:4700::1111
 
 * `Q` → Quit
 * `S` → Toggle statistics overlay
-* `P` → Pause / Resume tracing
+* `Z` → Pause / Resume tracing
 * `N` → Normal mode
 * `G` → Grid mode
-* `T` → Tree mode
+* `R` → Tree (Route) mode
+* `T` → Tools menu (enable/disable plugins)
+* `P` → Freeze / Unfreeze screen
 * `H/J/K/L` → Move cursor
-* `Enter` → Focus node
+* `Enter` → Focus node / toggle plugin
 * `C` → Toggle control-plane node
 * `Esc` → Back to previous view
 * `↑ / ↓` → Scroll hop list
@@ -140,6 +176,9 @@ Failures remain localized instead of collapsing the entire tracer process.
 
 Measured against a real internet target (`8.8.8.8`) with both tracers constrained to exactly the same physical transmission limits (10 ms minimum interval, as dictated by Trippy's constraints) over a ~10-second period. Both tools successfully transmitted and received real observations (`recv > 0`).
 
+> [!IMPORTANT]
+> **NSR was benchmarked with all plugins disabled** to eliminate any instrumentation or plugin-induced overhead and measure core pipeline throughput.
+
 ### End-to-End Throughput Comparison (10 ms Interval Limit)
 
 | Metric                | Trippy (Rust, Release) | NSR (C, `-Ofast`)    |
@@ -151,7 +190,7 @@ Measured against a real internet target (`8.8.8.8`) with both tracers constraine
 | **Binary Size**       | 9.2 MB                 | **63 KB**            |
 | **Max RSS**           | **7.8 MB**             | ~33.9 MB             |
 
-> **Note on Throughput:** Both tools were artificially clamped to a `10ms` minimum round duration. NSR's batch-emitting logic and lighter per-probe overhead allow it to push **~3.7× the throughput** of Trippy within the exact same time constraints, while the binary remains **~150× smaller**.
+> **Note on Throughput:** Both tools were artificially clamped to a `10ms` minimum round duration. NSR's benchmark was run with all plugins disabled to ensure zero plugin-induced overhead. NSR's batch-emitting logic and lighter per-probe overhead allow it to push **~3.7× the throughput** of Trippy within the exact same time constraints, while the binary remains **~150× smaller**.
 
 ### Measured NSR Output (Optimized 10 ms pacing)
 
