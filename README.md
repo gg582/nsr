@@ -4,6 +4,8 @@
 > **N**aughty **S**afety **R**uff
 > **N**etwork **Sniffer** t**R**aC3R
 
+![Demo](./demo.gif)
+
 NSR is a high-performance, **architecturally resilient** C23 implementation of a multi-target network tracer built on **LibTTAK**. Rather than treating raw throughput as the only metric that matters, NSR explores how far a tracer can push process isolation, deterministic execution, and low binary overhead without collapsing real-world performance.
 
 ---
