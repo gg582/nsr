@@ -6,7 +6,7 @@
 
 ![Demo](./demo.gif)
 
-NSR is a high-performance, **architecturally resilient** C23 implementation of a multi-target network tracer built on **LibTTAK**. Rather than treating raw throughput as the only metric that matters, NSR explores how far a tracer can push process isolation, deterministic execution, and low binary overhead without collapsing real-world performance.
+NSR is a high-performance, **architecturally resilient** C23 implementation of a multi-target network tracer built on custom systems library. Rather than treating raw throughput as the only metric that matters, NSR explores how far a tracer can push process isolation, deterministic execution, and low binary overhead without collapsing real-world performance.
 
 ---
 
@@ -20,6 +20,8 @@ NSR is a high-performance, **architecturally resilient** C23 implementation of a
 
 ```bash
 cd nsr
+git submodule init
+git submodule update --recursive
 make
 sudo ./nsr <target_ip>
 ````
