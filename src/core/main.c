@@ -106,11 +106,11 @@ static void spawn_gatekeeper(nsr_session_t *sess)
     }
 }
 
-static bool resolve_target(const char *arg, char *out_ip, size_t out_len)
+static bool resolve_target(const char *arg, int family, char *out_ip, size_t out_len)
 {
     struct addrinfo hints, *res;
     memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
+    hints.ai_family = family;
     hints.ai_socktype = SOCK_RAW;
 
     if (getaddrinfo(arg, NULL, &hints, &res) != 0)
@@ -132,16 +132,19 @@ int main(int argc, char **argv)
 {
     uint32_t interval_ms = 100;
     bool silent = false;
+    int address_family = AF_UNSPEC;
 
     static struct option long_options[] = {
         {"interval", required_argument, 0, 'i'},
         {"silent",   no_argument,       0, 's'},
+        {"ipv4",     no_argument,       0, '4'},
+        {"ipv6",     no_argument,       0, '6'},
         {"help",     no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "i:sh", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "i:s46h", long_options, NULL)) != -1) {
         switch (opt) {
         case 'i':
             interval_ms = atoi(optarg);
@@ -156,11 +159,19 @@ int main(int argc, char **argv)
         case 's':
             silent = true;
             break;
+        case '4':
+            address_family = AF_INET;
+            break;
+        case '6':
+            address_family = AF_INET6;
+            break;
         case 'h':
         default:
-            fprintf(stderr, "Usage: %s <target> [<target> ...] [-i ms] [--silent]\n", argv[0]);
+            fprintf(stderr, "Usage: %s <target> [<target> ...] [-i ms] [-4|-6] [--silent]\n", argv[0]);
             fprintf(stderr, "Options:\n");
             fprintf(stderr, "  -i, --interval MS   Transmission interval in milliseconds (default: 100)\n");
+            fprintf(stderr, "  -4, --ipv4          Resolve hostnames to IPv4 only\n");
+            fprintf(stderr, "  -6, --ipv6          Resolve hostnames to IPv6 only\n");
             fprintf(stderr, "  -s, --silent        Run without TUI\n");
             return EXIT_FAILURE;
         }
@@ -177,7 +188,7 @@ int main(int argc, char **argv)
 
     for (int i = optind; i < argc && g_num_sessions < NSR_MAX_TARGETS; i++) {
         char ip[64];
-        if (!resolve_target(argv[i], ip, sizeof(ip))) {
+        if (!resolve_target(argv[i], address_family, ip, sizeof(ip))) {
             fprintf(stderr, "Could not resolve hostname: %s\n", argv[i]);
             continue;
         }
@@ -259,38 +270,60 @@ int main(int argc, char **argv)
             for (int s = 0; s < g_num_sessions; s++) {
                 nsr_session_t *sess = &g_sessions[s];
                 if (exited_pid == sess->gk_pid) {
-                    if (!silent)
-                        fprintf(stderr, "[GATEKEEPER] Process crashed! target=%s status=%d\n",
-                                sess->target_ip, status);
-                    spawn_gatekeeper(sess);
+                    if (WIFEXITED(status)) {
+                        if (!silent)
+                            fprintf(stderr, "[GATEKEEPER] Process exited; disabling target=%s status=%d\n",
+                                    sess->target_ip, WEXITSTATUS(status));
+                        sess->active = false;
+                        if (sess->logic_pid > 0)
+                            kill(sess->logic_pid, SIGTERM);
+                    } else {
+                        if (!silent)
+                            fprintf(stderr, "[GATEKEEPER] Process crashed! target=%s status=%d\n",
+                                    sess->target_ip, status);
+                        spawn_gatekeeper(sess);
+                    }
                 } else if (exited_pid == sess->logic_pid) {
-                    if (!silent)
-                        fprintf(stderr, "[LOGIC] Process crashed! target=%s status=%d\n",
-                                sess->target_ip, status);
-                    sess->logic_pid = fork();
-                    if (sess->logic_pid == 0) {
-                        signal(SIGINT, SIG_DFL);
-                        signal(SIGTERM, SIG_DFL);
-                        nsr_config_t *config = mmap(NULL, sizeof(nsr_config_t), PROT_READ | PROT_WRITE,
-                                                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-                        atomic_init(&config->interval_ms, interval_ms);
-                        strncpy(config->target_ip, sess->target_ip, sizeof(config->target_ip) - 1);
-                        strncpy(config->target_host, sess->target_host, sizeof(config->target_host) - 1);
-                        nsr_logic_run(sess->g2l, sess->l2g, sess->l2t, config);
-                        exit(0);
+                    if (WIFEXITED(status) || !sess->active) {
+                        if (!silent && sess->active)
+                            fprintf(stderr, "[LOGIC] Process exited; disabling target=%s status=%d\n",
+                                    sess->target_ip, WIFEXITED(status) ? WEXITSTATUS(status) : status);
+                        sess->active = false;
+                    } else {
+                        if (!silent)
+                            fprintf(stderr, "[LOGIC] Process crashed! target=%s status=%d\n",
+                                    sess->target_ip, status);
+                        sess->logic_pid = fork();
+                        if (sess->logic_pid == 0) {
+                            signal(SIGINT, SIG_DFL);
+                            signal(SIGTERM, SIG_DFL);
+                            nsr_config_t *config = mmap(NULL, sizeof(nsr_config_t), PROT_READ | PROT_WRITE,
+                                                        MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+                            atomic_init(&config->interval_ms, interval_ms);
+                            strncpy(config->target_ip, sess->target_ip, sizeof(config->target_ip) - 1);
+                            strncpy(config->target_host, sess->target_host, sizeof(config->target_host) - 1);
+                            nsr_logic_run(sess->g2l, sess->l2g, sess->l2t, config);
+                            exit(0);
+                        }
                     }
                 }
             }
         }
 
+        bool any_active = false;
         for (int s = 0; s < g_num_sessions; s++) {
             nsr_session_t *sess = &g_sessions[s];
+            if (!sess->active)
+                continue;
+            any_active = true;
             nsr_telemetry_state_t new_state;
             while (nsr_shm_ring_large_pop(sess->l2t, &new_state, sizeof(new_state))) {
                 memcpy(&last_state, &new_state, sizeof(last_state));
                 nsr_topology_update_from_telemetry(&topo_mgr.state, &last_state);
             }
         }
+        if (!any_active)
+            g_running = false;
 
         g_plugin_mgr.vt->update_telemetry(&g_plugin_mgr, &last_state, &topo_mgr.state);
 

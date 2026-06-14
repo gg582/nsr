@@ -27,12 +27,18 @@ typedef struct {
     bool render_pending;
     bool render_hops_pending;
     bool on_key_pending;
+    bool input_grabbed;
+    bool is_modal;
     long long pending_render_id;
     long long pending_render_hops_id;
     long long pending_on_key_id;
     /* Keys this plugin reserved at init time (lowercase, sorted). */
     char reserved_keys[NSR_KEY_USER_LEN];
     int reserved_count;
+
+    /* Relaunch / crash monitoring */
+    bool crash_countdown_active;
+    long long crash_start_time;
 } nsr_plugin_entry_t;
 
 typedef struct nsr_plugin_registry {
@@ -66,6 +72,7 @@ int nsr_plugins_render_hops(nsr_plugin_registry_t *reg,
                             nsr_hop_annotation_t *out,
                             int max_out);
 bool nsr_plugins_on_key(nsr_plugin_registry_t *reg, int ch);
+bool nsr_plugins_modal_active(nsr_plugin_registry_t *reg);
 
 int  nsr_plugins_count(const nsr_plugin_registry_t *reg);
 const char *nsr_plugins_name(const nsr_plugin_registry_t *reg, int idx);
@@ -97,6 +104,7 @@ struct nsr_plugin_manager_vtable {
                         nsr_hop_annotation_t *out,
                         int max_out);
     bool (*on_key)(nsr_plugin_manager_t *self, int ch);
+    bool (*modal_active)(nsr_plugin_manager_t *self);
     int  (*count)(const nsr_plugin_manager_t *self);
     const char *(*name)(const nsr_plugin_manager_t *self, int idx);
     const char *(*description)(const nsr_plugin_manager_t *self, int idx);

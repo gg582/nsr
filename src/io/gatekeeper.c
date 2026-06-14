@@ -11,7 +11,9 @@
  *   - Stale inflight reaper to prevent sequence-wrap collisions.
  */
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include <nsr/telemetry.h>
 #include <ttak/net/session.h>
 #include <ttak/timing/timing.h>
@@ -30,6 +32,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdalign.h>
+#include <stddef.h>
 
 typedef struct {
     uint16_t seq;
@@ -63,6 +66,13 @@ static inline bool find_probe(uint16_t seq, uint8_t *ttl, uint64_t *sent_us)
     return false;
 }
 
+static inline void drop_probe(uint16_t seq)
+{
+    int idx = seq % NSR_GK_MAX_INFLIGHT;
+    if (g_inflight[idx].active && g_inflight[idx].seq == seq)
+        g_inflight[idx].active = false;
+}
+
 /* Reap entries older than 5 s to prevent seq-wrap false positives. */
 static inline void reap_stale_inflight(uint64_t now_us)
 {
@@ -86,9 +96,77 @@ static inline uint16_t fast_icmp_checksum(uint16_t id, uint16_t seq)
     return (uint16_t)~sum;
 }
 
+static bool parse_ipv6_original_icmp6(const uint8_t *buf, ssize_t n,
+                                      size_t ip6_off, uint16_t *rid,
+                                      uint16_t *rseq)
+{
+    if (n < (ssize_t)(ip6_off + sizeof(struct ip6_hdr)))
+        return false;
+
+    const struct ip6_hdr *ip6 = (const struct ip6_hdr *)(buf + ip6_off);
+    uint8_t next = ip6->ip6_nxt;
+    size_t off = ip6_off + sizeof(struct ip6_hdr);
+    size_t end = ip6_off + sizeof(struct ip6_hdr) + ntohs(ip6->ip6_plen);
+    if (end > (size_t)n)
+        end = (size_t)n;
+
+    while (1) {
+        switch (next) {
+        case IPPROTO_HOPOPTS:
+        case IPPROTO_ROUTING:
+        case IPPROTO_DSTOPTS: {
+            if (off + 2 > end)
+                return false;
+            next = buf[off];
+            size_t hdr_len = ((size_t)buf[off + 1] + 1U) * 8U;
+            if (hdr_len == 0 || off + hdr_len > end)
+                return false;
+            off += hdr_len;
+            break;
+        }
+        case IPPROTO_FRAGMENT:
+            if (off + 8 > end)
+                return false;
+            next = buf[off];
+            off += 8;
+            break;
+        case IPPROTO_AH: {
+            if (off + 2 > end)
+                return false;
+            next = buf[off];
+            size_t hdr_len = ((size_t)buf[off + 1] + 2U) * 4U;
+            if (hdr_len == 0 || off + hdr_len > end)
+                return false;
+            off += hdr_len;
+            break;
+        }
+        case IPPROTO_ICMPV6: {
+            if (off + sizeof(struct icmp6_hdr) > end)
+                return false;
+            const struct icmp6_hdr *icmp6 = (const struct icmp6_hdr *)(buf + off);
+            if (icmp6->icmp6_type != ICMP6_ECHO_REQUEST)
+                return false;
+            *rid = ntohs(icmp6->icmp6_id);
+            *rseq = ntohs(icmp6->icmp6_seq);
+            return true;
+        }
+        default:
+            return false;
+        }
+    }
+}
+
 void nsr_gatekeeper_run(nsr_shm_ring_t *l2g, nsr_shm_ring_t *g2l, const char *target_ip)
 {
-    bool is_v6 = (strchr(target_ip, ':') != NULL);
+    struct in6_addr target6;
+    struct in_addr target4;
+    bool is_v6 = inet_pton(AF_INET6, target_ip, &target6) == 1;
+    bool is_v4 = !is_v6 && inet_pton(AF_INET, target_ip, &target4) == 1;
+    if (!is_v6 && !is_v4) {
+        fprintf(stderr, "gatekeeper: invalid target address: %s\n", target_ip);
+        exit(1);
+    }
+
     int domain = is_v6 ? AF_INET6 : AF_INET;
     int proto  = is_v6 ? IPPROTO_ICMPV6 : IPPROTO_ICMP;
 
@@ -103,17 +181,29 @@ void nsr_gatekeeper_run(nsr_shm_ring_t *l2g, nsr_shm_ring_t *g2l, const char *ta
     int buf_size = 32 * 1024 * 1024;
     setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &buf_size, sizeof(buf_size));
     setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &buf_size, sizeof(buf_size));
+    if (is_v6) {
+        int checksum_offset = offsetof(struct icmp6_hdr, icmp6_cksum);
+        if (setsockopt(fd, IPPROTO_IPV6, IPV6_CHECKSUM,
+                       &checksum_offset, sizeof(checksum_offset)) < 0) {
+            /*
+             * Linux computes ICMPv6 checksums for IPPROTO_ICMPV6 raw sockets.
+             * Keep running if the explicit checksum offset is rejected.
+             */
+            if (errno != EINVAL && errno != ENOPROTOOPT)
+                perror("setsockopt(IPV6_CHECKSUM)");
+        }
+    }
 
     struct sockaddr_storage dest_addr;
     memset(&dest_addr, 0, sizeof(dest_addr));
     if (is_v6) {
         struct sockaddr_in6 *a = (struct sockaddr_in6 *)&dest_addr;
         a->sin6_family = AF_INET6;
-        inet_pton(AF_INET6, target_ip, &a->sin6_addr);
+        a->sin6_addr = target6;
     } else {
         struct sockaddr_in *a = (struct sockaddr_in *)&dest_addr;
         a->sin_family = AF_INET;
-        inet_pton(AF_INET, target_ip, &a->sin_addr);
+        a->sin_addr = target4;
     }
 
 #define BATCH_SIZE 1024
@@ -194,10 +284,22 @@ void nsr_gatekeeper_run(nsr_shm_ring_t *l2g, nsr_shm_ring_t *g2l, const char *ta
                 h->checksum         = fast_icmp_checksum(id_net, seq_net);
             }
         }
-        if (n_intents > 0)
-            sendmmsg(fd, msgs, n_intents, 0);
+        if (n_intents > 0) {
+            int sent = sendmmsg(fd, msgs, n_intents, 0);
+            if (sent < 0) {
+                if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
+                    perror("sendmmsg");
+                for (int i = 0; i < n_intents; i++)
+                    drop_probe(intents[i].seq);
+            } else if (sent < n_intents) {
+                for (int i = sent; i < n_intents; i++)
+                    drop_probe(intents[i].seq);
+            }
+        }
 
         while (1) {
+            for (int i = 0; i < BATCH_SIZE; i++)
+                rmsgs[i].msg_hdr.msg_namelen = sizeof(struct sockaddr_storage);
             int rcount = recvmmsg(fd, rmsgs, BATCH_SIZE, MSG_DONTWAIT, NULL);
             if (rcount <= 0)
                 break;
@@ -219,6 +321,8 @@ void nsr_gatekeeper_run(nsr_shm_ring_t *l2g, nsr_shm_ring_t *g2l, const char *ta
                     if (n < (ssize_t)sizeof(struct iphdr))
                         continue;
                     struct iphdr *ip = (struct iphdr *)buf;
+                    if (ip->version != 4)
+                        continue;
                     size_t ip_hdr_len = (size_t)ip->ihl * 4U;
                     if (ip->ihl < 5 || n < (ssize_t)(ip_hdr_len + sizeof(struct icmphdr)))
                         continue;
@@ -255,17 +359,11 @@ void nsr_gatekeeper_run(nsr_shm_ring_t *l2g, nsr_shm_ring_t *g2l, const char *ta
                         type = NSR_OBS_REPLY;
                     } else if (icmp6->icmp6_type == ICMP6_TIME_EXCEEDED ||
                                icmp6->icmp6_type == ICMP6_DST_UNREACH) {
-                        if (n < (ssize_t)(sizeof(struct icmp6_hdr) + sizeof(struct ip6_hdr) +
-                                          sizeof(struct icmp6_hdr)))
+                        if (!parse_ipv6_original_icmp6(buf, n, sizeof(struct icmp6_hdr),
+                                                       &rid, &rseq))
                             continue;
-                        struct ip6_hdr *orig_ip6 = (struct ip6_hdr *)(buf + sizeof(struct icmp6_hdr));
-                        struct icmp6_hdr *orig_icmp6 =
-                            (struct icmp6_hdr *)(buf + sizeof(struct icmp6_hdr) + sizeof(struct ip6_hdr));
-                        rid  = ntohs(orig_icmp6->icmp6_id);
-                        rseq = ntohs(orig_icmp6->icmp6_seq);
                         type = (icmp6->icmp6_type == ICMP6_DST_UNREACH) ? NSR_OBS_UNREACH
                                                                         : NSR_OBS_EXCEEDED;
-                        (void)orig_ip6; /* consumed above for pointer arithmetic only */
                     }
                 }
 

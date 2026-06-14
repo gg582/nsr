@@ -127,6 +127,7 @@ static void plugin_stop(nsr_plugin_entry_t *e)
     e->render_pending = false;
     e->render_hops_pending = false;
     e->on_key_pending = false;
+    e->is_modal = false;
     e->pending_render_id = -1;
     e->pending_render_hops_id = -1;
     e->pending_on_key_id = -1;
@@ -388,10 +389,6 @@ static void draw_render_response(const char *json, int y, int x)
     }
 }
 
-/* Drain one response from the plugin and route it to the pending request
- * that matches its id. This lets render/render_hops/on_key coexist without
- * overwriting the shared pending_id in the RPC transport. Returns true if a
- * response was consumed. */
 static bool plugin_drain_response(nsr_plugin_entry_t *e, int timeout_ms)
 {
     if (e->rpc.dead || e->rpc.out < 0)
@@ -420,12 +417,10 @@ static bool plugin_drain_response(nsr_plugin_entry_t *e, int timeout_ms)
         return true;
     }
     if (e->on_key_pending && id == e->pending_on_key_id) {
-        /* on_key is handled synchronously in plugin_try_on_key; discard stray. */
         nsr_json_free(&resp);
         e->on_key_pending = false;
         return true;
     }
-    /* Response for a stale or unknown id. */
     nsr_json_free(&resp);
     return true;
 }
@@ -447,8 +442,7 @@ void nsr_plugins_render(nsr_plugin_registry_t *reg,
         if (!e->enabled || !e->initialized || e->dead)
             continue;
 
-        /* Modal vs Normal layout positioning */
-        bool is_modal = false;
+        e->is_modal = false;
         long long m_w = 60, m_h = 13;
         if (e->last_render_resp.len > 0) {
             size_t mlen;
@@ -456,7 +450,7 @@ void nsr_plugins_render(nsr_plugin_registry_t *reg,
             if (res) {
                 const char *mv = nsr_json_obj_get(res, "is_modal", &mlen);
                 if (mv) {
-                    nsr_json_parse_bool(mv, mlen, &is_modal);
+                    nsr_json_parse_bool(mv, mlen, &e->is_modal);
                 }
                 const char *wv = nsr_json_obj_get(res, "modal_width", &mlen);
                 if (wv) nsr_json_parse_int(wv, mlen, &m_w);
@@ -466,7 +460,7 @@ void nsr_plugins_render(nsr_plugin_registry_t *reg,
         }
 
         int py = y, px = x, ph = h, pw = w;
-        if (is_modal) {
+        if (e->is_modal) {
             ph = (int)m_h;
             pw = (int)m_w;
             py = (screen_h - ph) / 2;
@@ -474,13 +468,11 @@ void nsr_plugins_render(nsr_plugin_registry_t *reg,
             if (py < 0) py = 0;
             if (px < 0) px = 0;
 
-            /* Clear background under the modal panel */
             for (int r = 0; r < ph; r++) {
                 mvhline(py + r, px, ' ', pw);
             }
 
-            /* Draw border for the modal panel */
-            attron(COLOR_PAIR(3)); /* Yellow border */
+            attron(COLOR_PAIR(3)); 
             mvhline(py, px, 0, pw);
             mvhline(py + ph - 1, px, 0, pw);
             mvvline(py, px, 0, ph);
@@ -498,13 +490,11 @@ void nsr_plugins_render(nsr_plugin_registry_t *reg,
             if (py < 0) py = 0;
             if (px < 0) px = 0;
 
-            /* Clear background under the sniffer panel to prevent traceroute text overlap */
             for (int r = 0; r < ph; r++) {
                 mvhline(py + r, px, ' ', pw);
             }
 
-            /* Draw border for the sniffer panel */
-            attron(COLOR_PAIR(1)); /* Cyan border */
+            attron(COLOR_PAIR(1)); 
             mvhline(py, px, 0, pw);
             mvhline(py + ph - 1, px, 0, pw);
             mvvline(py, px, 0, ph);
@@ -516,14 +506,11 @@ void nsr_plugins_render(nsr_plugin_registry_t *reg,
             attroff(COLOR_PAIR(1));
         }
 
-        /* 1. Draw the previously cached response immediately. */
         if (e->last_render_resp.len > 0)
             draw_render_response(nsr_json_cstr(&e->last_render_resp), py, px);
 
-        /* 2. Collect any pending response (tight budget so TUI stays smooth). */
         plugin_drain_response(e, 5);
 
-        /* 3. Fire a new request if the pipe is idle. */
         if (!e->render_pending) {
             nsr_json_buf_t params;
             nsr_json_init(&params);
@@ -653,15 +640,12 @@ int nsr_plugins_render_hops(nsr_plugin_registry_t *reg,
         if (!e->enabled || !e->initialized || e->dead)
             continue;
 
-        /* 1. Emit cached annotations immediately. */
         if (e->last_render_hops_resp.len > 0)
             total = parse_render_hops_response(nsr_json_cstr(&e->last_render_hops_resp),
                                                out, max_out, total);
 
-        /* 2. Collect any pending response. */
         plugin_drain_response(e, 5);
 
-        /* 3. Fire a new request if the pipe is idle. */
         if (!e->render_hops_pending) {
             if (nsr_json_rpc_send_request(&e->rpc, "render_hops", &params,
                                           &e->pending_render_hops_id)) {
@@ -691,7 +675,6 @@ static bool plugin_reserves_key(const nsr_plugin_entry_t *e, int ch)
 static bool plugin_try_on_key(nsr_plugin_entry_t *e,
                               const nsr_json_buf_t *params)
 {
-    /* Flush any earlier responses so the next line we read belongs to on_key. */
     while (plugin_drain_response(e, 0))
         ;
 
@@ -713,6 +696,13 @@ static bool plugin_try_on_key(nsr_plugin_entry_t *e,
         size_t len;
         const char *result = nsr_json_obj_get(nsr_json_cstr(&resp), "result", &len);
         if (result) {
+            
+            // 핵심 수정: IPC 응답이 떨어지자마자 호스트 단의 is_modal 상태 즉시 갱신
+            const char *mv = nsr_json_obj_get(result, "is_modal", &len);
+            if (mv) {
+                nsr_json_parse_bool(mv, len, &e->is_modal);
+            }
+
             const char *act_val = nsr_json_obj_get(result, "action", &len);
             char action_buf[64] = "";
             if (act_val) {
@@ -748,6 +738,8 @@ static bool plugin_try_on_key(nsr_plugin_entry_t *e,
             bool h = false;
             if (hv && nsr_json_parse_bool(hv, len, &h) && h) {
                 nsr_json_free(&resp);
+                nsr_json_free(&e->last_render_resp);
+                nsr_json_init(&e->last_render_resp);
                 return true;
             }
         }
@@ -784,18 +776,8 @@ bool nsr_plugins_on_key(nsr_plugin_registry_t *reg, int ch)
         if (!e->enabled || !e->initialized || e->dead)
             continue;
         
-        bool is_modal = false;
-        if (e->last_render_resp.len > 0) {
-            size_t mlen;
-            const char *res = nsr_json_obj_get(nsr_json_cstr(&e->last_render_resp), "result", &mlen);
-            if (res) {
-                const char *mv = nsr_json_obj_get(res, "is_modal", &mlen);
-                if (mv) {
-                    nsr_json_parse_bool(mv, mlen, &is_modal);
-                }
-            }
-        }
-        if (is_modal) {
+        // 핵심 수정: 렌더 캐시 의존 제거, 최신화된 호스트의 is_modal 상태 직접 활용
+        if (e->is_modal) {
             if (plugin_try_on_key(e, &params)) {
                 handled = true;
             }
@@ -941,7 +923,7 @@ static const char *plugin_mgr_description(const nsr_plugin_manager_t *self, int 
     return nsr_plugins_description(&self->registry, idx);
 }
 
-static bool plugin_mgr_enabled(const nsr_plugin_manager_t *self, int idx)
+bool plugin_mgr_enabled(const nsr_plugin_manager_t *self, int idx)
 {
     return nsr_plugins_enabled(&self->registry, idx);
 }

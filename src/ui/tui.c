@@ -25,6 +25,21 @@ enum {
     CP_HIGHLIGHT,
 };
 
+static void tui_print_clipped(int y, int x, int width, const char *text)
+{
+    if (y < 0 || x < 0 || width <= 0 || !text)
+        return;
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    if (y >= max_y || x >= max_x)
+        return;
+    if (x + width > max_x)
+        width = max_x - x;
+    if (width <= 0)
+        return;
+    mvprintw(y, x, "%.*s", width, text);
+}
+
 ttak_result_t nsr_tui_init(void)
 {
     setlocale(LC_ALL, "");
@@ -51,6 +66,17 @@ ttak_result_t nsr_tui_init(void)
 
 static void draw_box(int y, int x, int h, int w, const char *title)
 {
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    if (y < 0 || x < 0 || h < 1 || w < 1 || y >= max_y || x >= max_x)
+        return;
+    if (y + h >= max_y)
+        h = max_y - y - 1;
+    if (x + w >= max_x)
+        w = max_x - x - 1;
+    if (h < 1 || w < 1)
+        return;
+
     attron(COLOR_PAIR(CP_ACCENT));
     mvhline(y, x, 0, w);
     mvhline(y + h, x, 0, w);
@@ -62,7 +88,7 @@ static void draw_box(int y, int x, int h, int w, const char *title)
     mvaddch(y + h, x + w, ACS_LRCORNER);
     if (title) {
         attron(A_BOLD);
-        mvprintw(y, x + 2, " %s ", title);
+        tui_print_clipped(y, x + 2, w - 3, title);
         attroff(A_BOLD);
     }
     attroff(COLOR_PAIR(CP_ACCENT));
@@ -70,6 +96,9 @@ static void draw_box(int y, int x, int h, int w, const char *title)
 
 static void draw_footer(nsr_tui_state_t *tui, nsr_plugin_manager_t *plugins, int max_y, int max_x)
 {
+    if (!tui || max_y < 1 || max_x < 4)
+        return;
+
     attron(COLOR_PAIR(CP_HIGHLIGHT));
     mvhline(max_y - 1, 0, ' ', max_x);
 
@@ -100,7 +129,7 @@ static void draw_footer(nsr_tui_state_t *tui, nsr_plugin_manager_t *plugins, int
     if (has_modal) {
         snprintf(buf, sizeof(buf),
                  "[Up/Down] Focus Field  [Left/Right] Protocol  [Enter][Enter] Apply & Close  [Esc] Cancel");
-        mvprintw(max_y - 1, 2, "%.*s", max_x - 4, buf);
+        tui_print_clipped(max_y - 1, 2, max_x - 4, buf);
     } else {
         if (max_x < 110) {
             snprintf(buf, sizeof(buf),
@@ -121,20 +150,25 @@ static void draw_footer(nsr_tui_state_t *tui, nsr_plugin_manager_t *plugins, int
                      tui->keys.vt->label_char(&tui->keys, 'p'),
                      tui->keys.vt->label_char(&tui->keys, 'q'));
         }
-        
+
         if (sniffer_enabled) {
             int len = (int)strlen(buf);
             if (max_x - len > 50) {
-                strncat(buf, "  [a][a] Inspect settings  [s] Last packet  [f] Sniff", sizeof(buf) - len - 1);
+                strncat(buf, "  [a] Inspect settings  [s] Last packet  [f] Sniff", sizeof(buf) - len - 1);
             }
         }
-        
-        mvprintw(max_y - 1, 2, "%.*s", max_x - 21, buf);
 
-        if (tui->show_dashboard) {
-            mvprintw(max_y - 1, max_x - 18, "[%c] Close Settings", tui->keys.vt->label_char(&tui->keys, 'd'));
-        } else {
-            mvprintw(max_y - 1, max_x - 18, "[%c] Settings", tui->keys.vt->label_char(&tui->keys, 'd'));
+        int right_w = max_x >= 22 ? 20 : 0;
+        int left_w = max_x - right_w - 4;
+        tui_print_clipped(max_y - 1, 2, left_w, buf);
+
+        if (right_w > 0) {
+            if (tui->show_dashboard) {
+                snprintf(buf, sizeof(buf), "[[%c] Close Settings", tui->keys.vt->label_char(&tui->keys, 'd'));
+            } else {
+                snprintf(buf, sizeof(buf), "[[%c] Settings", tui->keys.vt->label_char(&tui->keys, 'd'));
+            }
+            tui_print_clipped(max_y - 1, max_x - right_w, right_w, buf);
         }
     }
     attroff(COLOR_PAIR(CP_HIGHLIGHT));
@@ -281,7 +315,7 @@ static void render_normal(nsr_tui_state_t *tui, nsr_telemetry_state_t *state,
     } else {
         mvprintw(0, max_x - 45, "INTERVAL: %d ms  UPTIME: [TIMELINE_FAULT]", state->interval_ms);
     }
-    tt_autoclean_dirty_pointers(now_ns);
+    ttak_mem_alloc_with_flags(0, 0, 0, 0);
 
     draw_box(2, 2, 3, max_x - 5, "TARGET INFO");
     mvprintw(3, 4, "DESTINATION: %-40s",
@@ -517,7 +551,6 @@ static void render_tree(nsr_tui_state_t *tui, nsr_topology_state_t *topo,
     int cursor_idx = 0;
 
     for (int t = 0; t < target_count; t++) {
-        /* Target header (not selectable). */
         if (line_idx >= tui->tree_scroll && line_idx < tui->tree_scroll + avail_rows) {
             int y = start_y + (line_idx - tui->tree_scroll);
             if (y < max_y - 2) {
@@ -664,7 +697,8 @@ static void render_tools(nsr_tui_state_t *tui, nsr_plugin_manager_t *plugins)
         tui->tools_scroll = tui->tools_cursor;
     if (tui->tools_cursor >= tui->tools_scroll + avail)
         tui->tools_scroll = tui->tools_cursor - avail + 1;
-    if (tui->tools_scroll < 0) tui->tools_scroll = 0;
+    if (tui->tools_scroll < 0)
+        tui->tools_scroll = 0;
 
     if (count == 0) {
         mvprintw(y + 2, x + 2, "No plugins loaded.");
@@ -703,7 +737,6 @@ void nsr_tui_render(nsr_tui_state_t *tui, nsr_telemetry_state_t *tel,
                     nsr_topology_state_t *topo, nsr_plugin_manager_t *plugins)
 {
     if (tui->frozen && tui->current_mode != NSR_UI_TOOLS) {
-        /* Keep the previous frame intact. Only update the frozen badge. */
         int max_y, max_x;
         getmaxyx(stdscr, max_y, max_x);
         (void)max_y;
@@ -741,6 +774,14 @@ int nsr_tui_update(nsr_tui_state_t *tui, nsr_topology_state_t *topo,
                    nsr_plugin_manager_t *plugins)
 {
     int ch = getch();
+    if (ch == ERR)
+        return 0;
+
+    if (plugins && plugins->vt->modal_active && plugins->vt->modal_active(plugins)) {
+        plugins->vt->on_key(plugins, ch);
+        return 0;
+    }
+
     if (tui->keys.vt->matches(&tui->keys, 'q', ch))
         return 1;
     if (tui->keys.vt->matches(&tui->keys, 'd', ch)) {

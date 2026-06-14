@@ -1,4 +1,6 @@
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include <nsr/telemetry.h>
 #include <ttak/timing/timing.h>
 #include <unistd.h>
