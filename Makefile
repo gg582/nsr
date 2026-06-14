@@ -18,17 +18,22 @@ CFLAGS = \
     -fno-math-errno \
     -fno-asynchronous-unwind-tables \
     -std=c2x \
-    -D_XOPEN_SOURCE_EXTENDED
+    -D_XOPEN_SOURCE_EXTENDED \
+	-D_GNU_SOURCE
 LDFLAGS = \
-    -L./lib/libttak \
+    -L./lib/libttak/lib \
+    -L/usr/local/cuda/lib64 \
     -lttak \
+    -lcudart \
+    -lstdc++ \
     -lpthread \
     -lncursesw \
     -flto \
     -Wl,--gc-sections \
     -Wl,--as-needed \
     -Wl,--strip-all \
-    -Wl,-Ofast
+    -Wl,-Ofast \
+    -Wl,-rpath,/usr/local/cuda/lib64
 
 CORE_SRC = src/main.c src/gatekeeper.c src/logic.c src/tui.c src/topology.c src/stubs.c
 CORE_OBJ = $(CORE_SRC:.c=.o)
