@@ -386,7 +386,7 @@ static void render_tree(nsr_tui_state_t *tui, nsr_topology_state_t *topo)
             int y = start_y + (line_idx - tui->tree_scroll);
             if (y < max_y - 2) {
                 attron(COLOR_PAIR(CP_ACCENT) | A_BOLD);
-                mvprintw(y, start_x, "► %s", targets[t]);
+                mvprintw(y, start_x, "# %s", targets[t]);
                 attroff(COLOR_PAIR(CP_ACCENT) | A_BOLD);
             }
         }
