@@ -1,5 +1,11 @@
 ## NSR (Net muShRoom) 🍄
 
+<p align="center">
+  <img src="./mascot.jpg" width="320" alt="NSR Mascot">
+  <br>
+  <em>"Wait, is that actually tobacco? I can smell 'Purple haze' from his Gat..."</em>
+</p>
+
 > **N**ot **S**ome **R**ust
 > 
 > **N**aughty **S**afety **R**uff
