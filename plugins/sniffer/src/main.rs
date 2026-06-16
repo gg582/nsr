@@ -1316,6 +1316,29 @@ fn send_key_response(id: Option<i64>, handled: bool) {
     }));
 }
 
+fn send_force_sync_response(id: Option<i64>, handled: bool, modal_active: bool) {
+    send_response(id, serde_json::json!({
+        "handled": handled,
+        "modal_active": modal_active,
+        "is_modal": modal_active,
+        "force_sync": true
+    }));
+}
+
+fn send_force_sync_notification(modal_active: bool) {
+    let msg = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "force_sync",
+        "params": {
+            "is_modal": modal_active
+        }
+    });
+    if let Ok(json_str) = serde_json::to_string(&msg) {
+        println!("{}", json_str);
+        let _ = std::io::stdout().flush();
+    }
+}
+
 fn handle_init(id: Option<i64>) {
     send_response(id, serde_json::json!({
         "status": "ok",
@@ -1641,10 +1664,18 @@ fn handle_on_key(id: Option<i64>, params: &serde_json::Value) {
 
     let mut handled = false;
     
-    let show_dashboard_local = {
+    let host_modal_input = params.get("modal_input").and_then(|v| v.as_bool()).unwrap_or(false);
+    let (show_dashboard_local, modal_active_local) = {
         let state = lock_state();
-        state.show_dashboard
+        let modal = state.show_dashboard || state.countdown_active;
+        (state.show_dashboard, modal)
     };
+
+    if host_modal_input && !modal_active_local {
+        send_force_sync_response(id, true, false);
+        send_force_sync_notification(false);
+        return;
+    }
     
     if show_dashboard_local {
         let apply_settings = {

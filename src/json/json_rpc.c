@@ -13,12 +13,14 @@ bool nsr_json_rpc_spawn(nsr_json_rpc_t *rpc, const char *path)
     memset(rpc, 0, sizeof(*rpc));
     rpc->next_id = 1;
     rpc->pending_id = -1;
+    nsr_json_init(&rpc->rx_buf);
 
-    int in_pipe[2];
-    int out_pipe[2];
+    int in_pipe[2] = { -1, -1 };
+    int out_pipe[2] = { -1, -1 };
     if (pipe(in_pipe) < 0 || pipe(out_pipe) < 0) {
         if (in_pipe[0] >= 0) close(in_pipe[0]);
         if (in_pipe[1] >= 0) close(in_pipe[1]);
+        nsr_json_free(&rpc->rx_buf);
         return false;
     }
 
@@ -26,6 +28,7 @@ bool nsr_json_rpc_spawn(nsr_json_rpc_t *rpc, const char *path)
     if (pid < 0) {
         close(in_pipe[0]); close(in_pipe[1]);
         close(out_pipe[0]); close(out_pipe[1]);
+        nsr_json_free(&rpc->rx_buf);
         return false;
     }
 
@@ -67,6 +70,7 @@ void nsr_json_rpc_close(nsr_json_rpc_t *rpc)
         waitpid(rpc->pid, NULL, 0);
         rpc->pid = 0;
     }
+    nsr_json_free(&rpc->rx_buf);
     rpc->dead = true;
     rpc->pending_id = -1;
 }
@@ -149,6 +153,21 @@ static bool recv_line(nsr_json_rpc_t *rpc, nsr_json_buf_t *buf, int timeout_ms)
     int remaining = timeout_ms;
 
     while (1) {
+        if (rpc->rx_buf.len > 0) {
+            char *nl = memchr(rpc->rx_buf.buf, '\n', rpc->rx_buf.len);
+            if (nl) {
+                size_t line_len = (size_t)(nl - rpc->rx_buf.buf);
+                size_t rest_off = line_len + 1;
+                size_t rest_len = rpc->rx_buf.len - rest_off;
+
+                nsr_json_append_raw(buf, rpc->rx_buf.buf, line_len);
+                memmove(rpc->rx_buf.buf, rpc->rx_buf.buf + rest_off, rest_len);
+                rpc->rx_buf.len = rest_len;
+                rpc->rx_buf.buf[rest_len] = '\0';
+                return true;
+            }
+        }
+
         int poll_timeout = remaining > 50 ? 50 : remaining;
         if (remaining < 0)
             poll_timeout = 50;
@@ -185,11 +204,7 @@ static bool recv_line(nsr_json_rpc_t *rpc, nsr_json_buf_t *buf, int timeout_ms)
             rpc->dead = true;
             return false;
         }
-        for (ssize_t i = 0; i < n; i++) {
-            if (tmp[i] == '\n')
-                return true;
-            nsr_json_append_raw(buf, &tmp[i], 1);
-        }
+        nsr_json_append_raw(&rpc->rx_buf, tmp, (size_t)n);
         remaining -= poll_timeout;
         if (remaining <= 0 && timeout_ms >= 0)
             return false;
@@ -274,6 +289,45 @@ bool nsr_json_rpc_try_recv_any(nsr_json_rpc_t *rpc,
         *id_out = resp_id;
     *response_out = buf;
     return true;
+}
+
+void nsr_json_rpc_discard_queued(nsr_json_rpc_t *rpc)
+{
+    const int max_reads = 64;
+
+    if (!rpc)
+        return;
+
+    nsr_json_reset(&rpc->rx_buf);
+
+    if (rpc->dead || rpc->out < 0)
+        return;
+
+    for (int reads = 0; reads < max_reads; reads++) {
+        struct pollfd pfd = { .fd = rpc->out, .events = POLLIN };
+        int rc = poll(&pfd, 1, 0);
+        if (rc < 0) {
+            if (errno == EINTR)
+                continue;
+            rpc->dead = true;
+            return;
+        }
+        if (rc == 0)
+            return;
+
+        char tmp[4096];
+        ssize_t n = read(rpc->out, tmp, sizeof(tmp));
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            rpc->dead = true;
+            return;
+        }
+        if (n == 0) {
+            rpc->dead = true;
+            return;
+        }
+    }
 }
 
 bool nsr_json_rpc_call(nsr_json_rpc_t *rpc,

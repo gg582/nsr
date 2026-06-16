@@ -15,6 +15,19 @@
 #define NSR_PLUGIN_MODAL_KEY_INTERVAL_MS 120
 #define NSR_PLUGIN_KEY_WAIT_MS 50
 
+static void build_key_params(nsr_json_buf_t *params, int ch, bool modal_input)
+{
+    nsr_json_init(params);
+    nsr_json_obj_start(params);
+    nsr_json_key(params, "key");
+    nsr_json_int(params, ch);
+    if (modal_input) {
+        nsr_json_key(params, "modal_input");
+        nsr_json_bool(params, true);
+    }
+    nsr_json_obj_end(params);
+}
+
 static long long now_ms(void)
 {
     struct timespec ts;
@@ -402,11 +415,77 @@ static void draw_render_response(const char *json, int y, int x)
     }
 }
 
+static void plugin_force_sync(nsr_plugin_entry_t *e)
+{
+    if (!e)
+        return;
+
+    nsr_json_rpc_discard_queued(&e->rpc);
+    e->rpc.pending_id = -1;
+
+    e->render_pending = false;
+    e->render_hops_pending = false;
+    e->on_key_pending = false;
+    e->pending_render_id = -1;
+    e->pending_render_hops_id = -1;
+    e->pending_on_key_id = -1;
+    e->last_on_key_ms = 0;
+
+    nsr_json_free(&e->last_render_resp);
+    nsr_json_init(&e->last_render_resp);
+    nsr_json_free(&e->last_render_hops_resp);
+    nsr_json_init(&e->last_render_hops_resp);
+}
+
+static bool plugin_handle_force_sync(nsr_plugin_entry_t *e,
+                                     const nsr_json_buf_t *msg)
+{
+    size_t len;
+    const char *method = nsr_json_obj_get(nsr_json_cstr(msg), "method", &len);
+    char method_buf[64] = "";
+    if (method)
+        nsr_json_parse_str(method, len, method_buf, sizeof(method_buf));
+    if (strcmp(method_buf, "force_sync") != 0)
+        return false;
+
+    bool modal_known = false;
+    bool modal = false;
+    const char *params = nsr_json_obj_get(nsr_json_cstr(msg), "params", &len);
+    if (params) {
+        const char *mv = nsr_json_obj_get(params, "is_modal", &len);
+        modal_known = mv && nsr_json_parse_bool(mv, len, &modal);
+    }
+
+    plugin_force_sync(e);
+    if (modal_known)
+        e->is_modal = modal;
+    return true;
+}
+
+static bool plugin_result_requests_force_sync(nsr_plugin_entry_t *e,
+                                              const char *result)
+{
+    size_t len;
+    const char *fv = nsr_json_obj_get(result, "force_sync", &len);
+    bool force = false;
+    if (!fv || !nsr_json_parse_bool(fv, len, &force) || !force)
+        return false;
+
+    const char *mv = nsr_json_obj_get(result, "is_modal", &len);
+    bool modal_known = false;
+    bool modal = false;
+    if (mv)
+        modal_known = nsr_json_parse_bool(mv, len, &modal);
+
+    plugin_force_sync(e);
+    if (modal_known)
+        e->is_modal = modal;
+    return true;
+}
+
 static bool plugin_drain_response(nsr_plugin_entry_t *e, int timeout_ms)
 {
     if (e->rpc.dead || e->rpc.out < 0)
-        return false;
-    if (!e->render_pending && !e->render_hops_pending && !e->on_key_pending)
         return false;
 
     nsr_json_buf_t resp;
@@ -415,6 +494,11 @@ static bool plugin_drain_response(nsr_plugin_entry_t *e, int timeout_ms)
     if (!nsr_json_rpc_try_recv_any(&e->rpc, timeout_ms, &resp, &id)) {
         nsr_json_free(&resp);
         return false;
+    }
+
+    if (plugin_handle_force_sync(e, &resp)) {
+        nsr_json_free(&resp);
+        return true;
     }
 
     if (e->render_pending && id == e->pending_render_id) {
@@ -430,8 +514,25 @@ static bool plugin_drain_response(nsr_plugin_entry_t *e, int timeout_ms)
         return true;
     }
     if (e->on_key_pending && id == e->pending_on_key_id) {
-        nsr_json_free(&resp);
         e->on_key_pending = false;
+        size_t len;
+        const char *result = nsr_json_obj_get(nsr_json_cstr(&resp), "result", &len);
+        if (result) {
+            if (plugin_result_requests_force_sync(e, result)) {
+                nsr_json_free(&resp);
+                return true;
+            }
+            const char *mv = nsr_json_obj_get(result, "is_modal", &len);
+            if (mv)
+                nsr_json_parse_bool(mv, len, &e->is_modal);
+            const char *hv = nsr_json_obj_get(result, "handled", &len);
+            bool handled = false;
+            if (hv && nsr_json_parse_bool(hv, len, &handled) && handled) {
+                nsr_json_free(&e->last_render_resp);
+                nsr_json_init(&e->last_render_resp);
+            }
+        }
+        nsr_json_free(&resp);
         return true;
     }
     nsr_json_free(&resp);
@@ -720,13 +821,32 @@ static bool plugin_try_on_key(nsr_plugin_entry_t *e,
 
     long long id = -1;
     bool got = nsr_json_rpc_try_recv_any(&e->rpc, 10, &resp, &id);
+    if (got && plugin_handle_force_sync(e, &resp)) {
+        nsr_json_free(&resp);
+        return true;
+    }
+    if (got && e->render_pending && id == e->pending_render_id) {
+        nsr_json_free(&e->last_render_resp);
+        e->last_render_resp = resp;
+        e->render_pending = false;
+        return false;
+    }
+    if (got && e->render_hops_pending && id == e->pending_render_hops_id) {
+        nsr_json_free(&e->last_render_hops_resp);
+        e->last_render_hops_resp = resp;
+        e->render_hops_pending = false;
+        return false;
+    }
     if (got && id == e->pending_on_key_id) {
         e->on_key_pending = false;
         size_t len;
         const char *result = nsr_json_obj_get(nsr_json_cstr(&resp), "result", &len);
         if (result) {
-            
-            // 핵심 수정: IPC 응답이 떨어지자마자 호스트 단의 is_modal 상태 즉시 갱신
+            if (plugin_result_requests_force_sync(e, result)) {
+                nsr_json_free(&resp);
+                return true;
+            }
+
             const char *mv = nsr_json_obj_get(result, "is_modal", &len);
             if (mv) {
                 nsr_json_parse_bool(mv, len, &e->is_modal);
@@ -788,13 +908,6 @@ bool nsr_plugins_on_key(nsr_plugin_registry_t *reg, int ch)
     if (!reg || ch < 0)
         return false;
 
-    nsr_json_buf_t params;
-    nsr_json_init(&params);
-    nsr_json_obj_start(&params);
-    nsr_json_key(&params, "key");
-    nsr_json_int(&params, ch);
-    nsr_json_obj_end(&params);
-
     bool handled = false;
     bool targeted = false;
 
@@ -805,11 +918,13 @@ bool nsr_plugins_on_key(nsr_plugin_registry_t *reg, int ch)
         if (!e->enabled || !e->initialized || e->dead)
             continue;
         
-        // 핵심 수정: 렌더 캐시 의존 제거, 최신화된 호스트의 is_modal 상태 직접 활용
         if (e->is_modal) {
+            nsr_json_buf_t params;
+            build_key_params(&params, ch, true);
             if (plugin_try_on_key(e, &params, true)) {
                 handled = true;
             }
+            nsr_json_free(&params);
         }
     }
 
@@ -822,8 +937,11 @@ bool nsr_plugins_on_key(nsr_plugin_registry_t *reg, int ch)
         if (!plugin_reserves_key(e, ch))
             continue;
         targeted = true;
+        nsr_json_buf_t params;
+        build_key_params(&params, ch, false);
         if (plugin_try_on_key(e, &params, false))
             handled = true;
+        nsr_json_free(&params);
     }
 
     /* Second pass: generic on_key broadcast for unreserved keys. */
@@ -833,12 +951,14 @@ bool nsr_plugins_on_key(nsr_plugin_registry_t *reg, int ch)
             plugin_check_alive(e);
             if (!e->enabled || !e->initialized || e->dead)
                 continue;
+            nsr_json_buf_t params;
+            build_key_params(&params, ch, false);
             if (plugin_try_on_key(e, &params, false))
                 handled = true;
+            nsr_json_free(&params);
         }
     }
 
-    nsr_json_free(&params);
     return handled;
 }
 

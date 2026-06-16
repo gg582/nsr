@@ -12,6 +12,7 @@ typedef struct {
     int next_id;
     long long pending_id; /* id of the last request awaiting a response, -1 if none */
     bool dead;
+    nsr_json_buf_t rx_buf; /* complete lines can share a read; keep leftovers here */
 } nsr_json_rpc_t;
 
 bool nsr_json_rpc_spawn(nsr_json_rpc_t *rpc, const char *path);
@@ -36,6 +37,10 @@ bool nsr_json_rpc_try_recv_any(nsr_json_rpc_t *rpc,
                                int timeout_ms,
                                nsr_json_buf_t *response_out,
                                long long *id_out);
+
+/* Drop buffered and immediately available unread plugin output. Used after a
+ * plugin asks the host to abandon stale IPC state and resynchronize. */
+void nsr_json_rpc_discard_queued(nsr_json_rpc_t *rpc);
 
 /* Synchronous call; kept for compatibility and simple callers. */
 bool nsr_json_rpc_call(nsr_json_rpc_t *rpc,
