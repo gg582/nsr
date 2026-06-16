@@ -4,7 +4,7 @@
 
 /* NSR built-in shortcut keys (caseless). Each letter is one default binding. */
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L
-constexpr const char *RESERVED_KEYS = "qngmtzspd";
+const char *RESERVED_KEYS = "qngmtzspd";
 #else
 static const char * const RESERVED_KEYS = "qngmtzspd";
 #endif
