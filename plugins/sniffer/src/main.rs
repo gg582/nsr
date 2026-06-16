@@ -1360,10 +1360,20 @@ fn handle_render(id: Option<i64>, params: &serde_json::Value) {
     }
     if height < 6 { height = 6; }
     
-    let mut show_countdown_modal = false;
-    let mut countdown_rem_secs = 0;
+    // ── Single lock: read & update all modal/dashboard state atomically ──
+    enum RenderMode {
+        Countdown { rem_secs: i32 },
+        Dashboard {
+            inspect_focus: usize,
+            inspect_proto_idx: usize,
+            inspect_filter: String,
+            inspect_show_raw: bool,
+            inspect_body_mode: usize,
+        },
+        Normal,
+    }
     
-    {
+    let render_mode = {
         let mut state = lock_state();
         state.focused_addr = focused_addr;
         
@@ -1396,125 +1406,133 @@ fn handle_render(id: Option<i64>, params: &serde_json::Value) {
                     }
                 }
                 state.countdown_active = false;
+                RenderMode::Normal
             } else {
-                show_countdown_modal = true;
-                countdown_rem_secs = 3 - (elapsed / 1000) as i32;
-                if countdown_rem_secs < 1 { countdown_rem_secs = 1; }
+                let mut rem = 3 - (elapsed / 1000) as i32;
+                if rem < 1 { rem = 1; }
+                RenderMode::Countdown { rem_secs: rem }
             }
+        } else if state.show_dashboard {
+            RenderMode::Dashboard {
+                inspect_focus: state.inspect_focus,
+                inspect_proto_idx: state.inspect_proto_idx,
+                inspect_filter: state.inspect_filter.clone(),
+                inspect_show_raw: state.inspect_show_raw,
+                inspect_body_mode: state.inspect_body_mode,
+            }
+        } else {
+            RenderMode::Normal
         }
-    }
-    
-    if show_countdown_modal {
-        let msg = format!("CURL Request Accepted. Starting in {}s...", countdown_rem_secs);
-        let mut x_pos = (width - msg.len() as i64) / 2;
-        if x_pos < 1 { x_pos = 1; }
-        
-        let lines = vec![
-            serde_json::json!({
-                "y": 2,
-                "x": x_pos,
-                "text": msg,
-                "color": "yellow"
-            })
-        ];
-        
-        send_response(id, serde_json::json!({
-            "is_modal": true,
-            "modal_active": true,
-            "modal_width": 60,
-            "modal_height": 5,
-            "lines": lines
-        }));
-        return;
-    }
-    
-    let show_dashboard_local = {
-        let state = lock_state();
-        state.show_dashboard
     };
+    // ── Lock released here ──
     
-    if show_dashboard_local {
-        let state = lock_state();
-        let mut lines = Vec::new();
-        let mut y = 1;
-        
-        lines.push(serde_json::json!({
-            "y": y,
-            "x": 12,
-            "text": "=== PACKET INSPECTION SETTINGS ===",
-            "color": "cyan"
-        }));
-        y += 2;
-        
-        // Protocol Filter (focus index 0)
-        let marker_proto = if state.inspect_focus == 0 { " >" } else { "  " };
-        lines.push(serde_json::json!({
-            "y": y,
-            "x": 2,
-            "text": format!("{} Protocol Filter: < {} >", marker_proto, PROTO_FILTERS[state.inspect_proto_idx]),
-            "color": if state.inspect_focus == 0 { Some("yellow") } else { None }
-        }));
-        y += 1;
-        
-        // Payload Filter (focus index 1)
-        let cursor_filter = if state.inspect_focus == 1 { "_" } else { "" };
-        let marker_filter = if state.inspect_focus == 1 { " >" } else { "  " };
-        lines.push(serde_json::json!({
-            "y": y,
-            "x": 2,
-            "text": format!("{} Payload Filter:  {}{}", marker_filter, state.inspect_filter, cursor_filter),
-            "color": if state.inspect_focus == 1 { Some("yellow") } else { None }
-        }));
-        y += 1;
-        
-        // Show Raw Body (focus index 2)
-        let marker_raw = if state.inspect_focus == 2 { " >" } else { "  " };
-        let raw_val = if state.inspect_show_raw { "Yes" } else { "No " };
-        lines.push(serde_json::json!({
-            "y": y,
-            "x": 2,
-            "text": format!("{} Show Raw Body:    [ {} ]", marker_raw, raw_val),
-            "color": if state.inspect_focus == 2 { Some("yellow") } else { None }
-        }));
-        y += 1;
-        
-        // Body Mode (focus index 3)
-        let marker_mode = if state.inspect_focus == 3 { " >" } else { "  " };
-        let mode_val = if state.inspect_body_mode == 0 { "UTF-8" } else { "Hex  " };
-        lines.push(serde_json::json!({
-            "y": y,
-            "x": 2,
-            "text": format!("{} Body Mode:        < {} >", marker_mode, mode_val),
-            "color": if state.inspect_focus == 3 { Some("yellow") } else { None }
-        }));
-        y += 2;
-        
-        lines.push(serde_json::json!({
-            "y": y, "x": 4, "text": "Use [Up/Down] to navigate fields", "color": "white"
-        }));
-        y += 1;
-        lines.push(serde_json::json!({
-            "y": y, "x": 4, "text": "Use [Left/Right] to change Protocol/Raw/Mode", "color": "white"
-        }));
-        y += 1;
-        
-        lines.push(serde_json::json!({
-            "y": y, "x": 4, "text": "Press ENTER to APPLY & CLOSE", "color": "green"
-        }));
-        y += 1;
-        
-        lines.push(serde_json::json!({
-            "y": y, "x": 4, "text": "Press ESC to Cancel", "color": "red"
-        }));
-        
-        send_response(id, serde_json::json!({
-            "is_modal": true,
-            "modal_active": true,
-            "modal_width": 60,
-            "modal_height": 15,
-            "lines": lines
-        }));
-        return;
+    match render_mode {
+        RenderMode::Countdown { rem_secs } => {
+            let msg = format!("CURL Request Accepted. Starting in {}s...", rem_secs);
+            let mut x_pos = (width - msg.len() as i64) / 2;
+            if x_pos < 1 { x_pos = 1; }
+            
+            let lines = vec![
+                serde_json::json!({
+                    "y": 2,
+                    "x": x_pos,
+                    "text": msg,
+                    "color": "yellow"
+                })
+            ];
+            
+            send_response(id, serde_json::json!({
+                "is_modal": true,
+                "modal_active": true,
+                "modal_width": 60,
+                "modal_height": 5,
+                "lines": lines
+            }));
+            return;
+        }
+        RenderMode::Dashboard { inspect_focus, inspect_proto_idx, inspect_filter, inspect_show_raw, inspect_body_mode } => {
+            let mut lines = Vec::new();
+            let mut y = 1;
+            
+            lines.push(serde_json::json!({
+                "y": y,
+                "x": 12,
+                "text": "=== PACKET INSPECTION SETTINGS ===",
+                "color": "cyan"
+            }));
+            y += 2;
+            
+            // Protocol Filter (focus index 0)
+            let marker_proto = if inspect_focus == 0 { " >" } else { "  " };
+            lines.push(serde_json::json!({
+                "y": y,
+                "x": 2,
+                "text": format!("{} Protocol Filter: < {} >", marker_proto, PROTO_FILTERS[inspect_proto_idx]),
+                "color": if inspect_focus == 0 { Some("yellow") } else { None }
+            }));
+            y += 1;
+            
+            // Payload Filter (focus index 1)
+            let cursor_filter = if inspect_focus == 1 { "_" } else { "" };
+            let marker_filter = if inspect_focus == 1 { " >" } else { "  " };
+            lines.push(serde_json::json!({
+                "y": y,
+                "x": 2,
+                "text": format!("{} Payload Filter:  {}{}", marker_filter, inspect_filter, cursor_filter),
+                "color": if inspect_focus == 1 { Some("yellow") } else { None }
+            }));
+            y += 1;
+            
+            // Show Raw Body (focus index 2)
+            let marker_raw = if inspect_focus == 2 { " >" } else { "  " };
+            let raw_val = if inspect_show_raw { "Yes" } else { "No " };
+            lines.push(serde_json::json!({
+                "y": y,
+                "x": 2,
+                "text": format!("{} Show Raw Body:    [ {} ]", marker_raw, raw_val),
+                "color": if inspect_focus == 2 { Some("yellow") } else { None }
+            }));
+            y += 1;
+            
+            // Body Mode (focus index 3)
+            let marker_mode = if inspect_focus == 3 { " >" } else { "  " };
+            let mode_val = if inspect_body_mode == 0 { "UTF-8" } else { "Hex  " };
+            lines.push(serde_json::json!({
+                "y": y,
+                "x": 2,
+                "text": format!("{} Body Mode:        < {} >", marker_mode, mode_val),
+                "color": if inspect_focus == 3 { Some("yellow") } else { None }
+            }));
+            y += 2;
+            
+            lines.push(serde_json::json!({
+                "y": y, "x": 4, "text": "Use [Up/Down] to navigate fields", "color": "white"
+            }));
+            y += 1;
+            lines.push(serde_json::json!({
+                "y": y, "x": 4, "text": "Use [Left/Right] to change Protocol/Raw/Mode", "color": "white"
+            }));
+            y += 1;
+            
+            lines.push(serde_json::json!({
+                "y": y, "x": 4, "text": "Press ENTER to APPLY & CLOSE", "color": "green"
+            }));
+            y += 1;
+            
+            lines.push(serde_json::json!({
+                "y": y, "x": 4, "text": "Press ESC to Cancel", "color": "red"
+            }));
+            
+            send_response(id, serde_json::json!({
+                "is_modal": true,
+                "modal_active": true,
+                "modal_width": 60,
+                "modal_height": 15,
+                "lines": lines
+            }));
+            return;
+        }
+        RenderMode::Normal => {}
     }
     
     let state = lock_state();
@@ -1682,6 +1700,8 @@ fn handle_on_key(id: Option<i64>, params: &serde_json::Value) {
         };
         
         if apply_settings {
+            // Gather everything we need under one lock, then release before
+            // calling start_sniffer / stop_sniffer (which also lock internally).
             let ip_to_sniff = {
                 let mut state = lock_state();
                 
@@ -1706,7 +1726,7 @@ fn handle_on_key(id: Option<i64>, params: &serde_json::Value) {
                 }
                 
                 ip_to_use
-            };
+            }; // ← lock released here, safe to call start/stop_sniffer
             
             if !ip_to_sniff.is_empty() {
                 let _ = start_sniffer(&ip_to_sniff);
