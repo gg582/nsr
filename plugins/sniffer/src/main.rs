@@ -1661,7 +1661,13 @@ fn handle_on_key(id: Option<i64>, params: &serde_json::Value) {
             } else if key == 260 || key == 'h' as i64 || key == 'H' as i64 {
                 if state.inspect_focus == 0 {
                     let count = PROTO_FILTERS.len();
-                    state.inspect_proto_idx = (state.inspect_proto_idx + count - 1) % count;
+
+                    // Move to the previous protocol and wrap from the first item to the last item.
+                    if state.inspect_proto_idx == 0 {
+                        state.inspect_proto_idx = count - 1;
+                    } else {
+                        state.inspect_proto_idx -= 1;
+                    }
                 } else if state.inspect_focus == 2 {
                     state.inspect_show_raw = !state.inspect_show_raw;
                 } else if state.inspect_focus == 3 {
@@ -1671,7 +1677,13 @@ fn handle_on_key(id: Option<i64>, params: &serde_json::Value) {
             } else if key == 261 || key == 'l' as i64 || key == 'L' as i64 {
                 if state.inspect_focus == 0 {
                     let count = PROTO_FILTERS.len();
-                    state.inspect_proto_idx = (state.inspect_proto_idx + 1) % count;
+
+                    // Move to the next protocol and wrap from the last item to the first item.
+                    if state.inspect_proto_idx >= count - 1 {
+                        state.inspect_proto_idx = 0;
+                    } else {
+                        state.inspect_proto_idx += 1;
+                    }
                 } else if state.inspect_focus == 2 {
                     state.inspect_show_raw = !state.inspect_show_raw;
                 } else if state.inspect_focus == 3 {
