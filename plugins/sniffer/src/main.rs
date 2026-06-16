@@ -174,10 +174,6 @@ fn ip_is_loopback(ip: &str) -> bool {
     ip.parse::<IpAddr>().map(|addr| addr.is_loopback()).unwrap_or(false)
 }
 
-fn is_ip_input_char(c: char) -> bool {
-    c.is_ascii_hexdigit() || c == '.' || c == ':'
-}
-
 #[cfg(unix)]
 fn create_raw_socket() -> Result<socket2::Socket, std::io::Error> {
     use socket2::{Socket, Domain, Type, Protocol};
@@ -1450,52 +1446,46 @@ fn handle_render(id: Option<i64>, params: &serde_json::Value) {
         }));
         y += 2;
         
-        let cursor_ip = if state.inspect_focus == 0 { "_" } else { "" };
-        let marker_ip = if state.inspect_focus == 0 { " >" } else { "  " };
-        lines.push(serde_json::json!({
-            "y": y,
-            "x": 2,
-            "text": format!("{} Target IP:        {}{}", marker_ip, state.inspect_ip, cursor_ip),
-            "color": if state.inspect_focus == 0 { Some("yellow") } else { None }
-        }));
-        y += 1;
-        
-        let marker_proto = if state.inspect_focus == 1 { " >" } else { "  " };
+        // Protocol Filter (focus index 0)
+        let marker_proto = if state.inspect_focus == 0 { " >" } else { "  " };
         lines.push(serde_json::json!({
             "y": y,
             "x": 2,
             "text": format!("{} Protocol Filter: < {} >", marker_proto, PROTO_FILTERS[state.inspect_proto_idx]),
-            "color": if state.inspect_focus == 1 { Some("yellow") } else { None }
+            "color": if state.inspect_focus == 0 { Some("yellow") } else { None }
         }));
         y += 1;
         
-        let cursor_filter = if state.inspect_focus == 2 { "_" } else { "" };
-        let marker_filter = if state.inspect_focus == 2 { " >" } else { "  " };
+        // Payload Filter (focus index 1)
+        let cursor_filter = if state.inspect_focus == 1 { "_" } else { "" };
+        let marker_filter = if state.inspect_focus == 1 { " >" } else { "  " };
         lines.push(serde_json::json!({
             "y": y,
             "x": 2,
             "text": format!("{} Payload Filter:  {}{}", marker_filter, state.inspect_filter, cursor_filter),
-            "color": if state.inspect_focus == 2 { Some("yellow") } else { None }
+            "color": if state.inspect_focus == 1 { Some("yellow") } else { None }
         }));
         y += 1;
         
-        let marker_raw = if state.inspect_focus == 3 { " >" } else { "  " };
+        // Show Raw Body (focus index 2)
+        let marker_raw = if state.inspect_focus == 2 { " >" } else { "  " };
         let raw_val = if state.inspect_show_raw { "Yes" } else { "No " };
         lines.push(serde_json::json!({
             "y": y,
             "x": 2,
             "text": format!("{} Show Raw Body:    [ {} ]", marker_raw, raw_val),
-            "color": if state.inspect_focus == 3 { Some("yellow") } else { None }
+            "color": if state.inspect_focus == 2 { Some("yellow") } else { None }
         }));
         y += 1;
         
-        let marker_mode = if state.inspect_focus == 4 { " >" } else { "  " };
+        // Body Mode (focus index 3)
+        let marker_mode = if state.inspect_focus == 3 { " >" } else { "  " };
         let mode_val = if state.inspect_body_mode == 0 { "UTF-8" } else { "Hex  " };
         lines.push(serde_json::json!({
             "y": y,
             "x": 2,
             "text": format!("{} Body Mode:        < {} >", marker_mode, mode_val),
-            "color": if state.inspect_focus == 4 { Some("yellow") } else { None }
+            "color": if state.inspect_focus == 3 { Some("yellow") } else { None }
         }));
         y += 2;
         
@@ -1645,28 +1635,28 @@ fn handle_on_key(id: Option<i64>, params: &serde_json::Value) {
                 state.show_dashboard = false;
                 handled = true;
             } else if key == 259 || key == 'k' as i64 || key == 'K' as i64 {
-                state.inspect_focus = (state.inspect_focus + 4) % 5;
+                state.inspect_focus = (state.inspect_focus + 3) % 4; // move up
                 handled = true;
             } else if key == 258 || key == 'j' as i64 || key == 'J' as i64 {
-                state.inspect_focus = (state.inspect_focus + 1) % 5;
+                state.inspect_focus = (state.inspect_focus + 1) % 4; // move down
                 handled = true;
             } else if key == 260 || key == 'h' as i64 || key == 'H' as i64 {
-                if state.inspect_focus == 1 {
+                if state.inspect_focus == 0 {
                     let count = PROTO_FILTERS.len();
                     state.inspect_proto_idx = (state.inspect_proto_idx + count - 1) % count;
-                } else if state.inspect_focus == 3 {
+                } else if state.inspect_focus == 2 {
                     state.inspect_show_raw = !state.inspect_show_raw;
-                } else if state.inspect_focus == 4 {
+                } else if state.inspect_focus == 3 {
                     state.inspect_body_mode = 1 - state.inspect_body_mode;
                 }
                 handled = true;
             } else if key == 261 || key == 'l' as i64 || key == 'L' as i64 {
-                if state.inspect_focus == 1 {
+                if state.inspect_focus == 0 {
                     let count = PROTO_FILTERS.len();
                     state.inspect_proto_idx = (state.inspect_proto_idx + 1) % count;
-                } else if state.inspect_focus == 3 {
+                } else if state.inspect_focus == 2 {
                     state.inspect_show_raw = !state.inspect_show_raw;
-                } else if state.inspect_focus == 4 {
+                } else if state.inspect_focus == 3 {
                     state.inspect_body_mode = 1 - state.inspect_body_mode;
                 }
                 handled = true;
@@ -1675,20 +1665,13 @@ fn handle_on_key(id: Option<i64>, params: &serde_json::Value) {
                 apply = true;
                 handled = true;
             } else if key == 263 || key == 127 || key == 8 {
-                if state.inspect_focus == 0 {
-                    let _ = state.inspect_ip.pop();
-                } else if state.inspect_focus == 2 {
+                if state.inspect_focus == 1 {
                     let _ = state.inspect_filter.pop();
                 }
                 handled = true;
             } else if key >= 32 && key <= 126 {
                 let c = key as u8 as char;
-                if state.inspect_focus == 0 {
-                    state.error_invalid_ip = false;
-                    if state.inspect_ip.len() < 47 && is_ip_input_char(c) {
-                        state.inspect_ip.push(c);
-                    }
-                } else if state.inspect_focus == 2 {
+                if state.inspect_focus == 1 {
                     if state.inspect_filter.len() < 63 {
                         state.inspect_filter.push(c);
                     }
@@ -1707,6 +1690,13 @@ fn handle_on_key(id: Option<i64>, params: &serde_json::Value) {
                 state.state_show_raw = state.inspect_show_raw;
                 state.state_body_mode = state.inspect_body_mode;
                 
+                // Use the entered IP if provided; otherwise fall back to the current target IP
+                let ip_to_use = if !state.inspect_ip.is_empty() {
+                    state.inspect_ip.clone()
+                } else {
+                    state.target_ip.clone()
+                };
+                
                 let fp = state.filter_proto.to_uppercase();
                 if fp == "HTTP" || fp == "HTTPS" || fp == "TLS" {
                     state.countdown_active = true;
@@ -1715,7 +1705,7 @@ fn handle_on_key(id: Option<i64>, params: &serde_json::Value) {
                     state.countdown_active = false;
                 }
                 
-                state.inspect_ip.clone()
+                ip_to_use
             };
             
             if !ip_to_sniff.is_empty() {
