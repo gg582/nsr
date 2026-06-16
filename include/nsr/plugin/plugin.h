@@ -32,6 +32,7 @@ typedef struct {
     long long pending_render_id;
     long long pending_render_hops_id;
     long long pending_on_key_id;
+    long long last_on_key_ms;
     /* Keys this plugin reserved at init time (lowercase, sorted). */
     char reserved_keys[NSR_KEY_USER_LEN];
     int reserved_count;

@@ -102,6 +102,7 @@ struct GlobalState {
     inspect_show_raw: bool,
     inspect_body_mode: usize,
     inspect_focus: usize,
+    last_dashboard_key_ms: u64,
     
     countdown_active: bool,
     countdown_start_ms: u64,
@@ -138,6 +139,7 @@ impl GlobalState {
             inspect_show_raw: false,
             inspect_body_mode: 0,
             inspect_focus: 0,
+            last_dashboard_key_ms: 0,
             countdown_active: false,
             countdown_start_ms: 0,
             state_show_raw: false,
@@ -1648,17 +1650,23 @@ fn handle_on_key(id: Option<i64>, params: &serde_json::Value) {
         let apply_settings = {
             let mut state = lock_state();
             let mut apply = false;
-            
-            if key == 27 {
+            let t = now_ms();
+            if t.saturating_sub(state.last_dashboard_key_ms) < 100 {
+                handled = true;
+            } else if key == 27 {
+                state.last_dashboard_key_ms = t;
                 state.show_dashboard = false;
                 handled = true;
             } else if key == 259 || key == 'k' as i64 || key == 'K' as i64 {
+                state.last_dashboard_key_ms = t;
                 state.inspect_focus = (state.inspect_focus + 3) % 4; // move up
                 handled = true;
             } else if key == 258 || key == 'j' as i64 || key == 'J' as i64 {
+                state.last_dashboard_key_ms = t;
                 state.inspect_focus = (state.inspect_focus + 1) % 4; // move down
                 handled = true;
             } else if key == 260 || key == 'h' as i64 || key == 'H' as i64 {
+                state.last_dashboard_key_ms = t;
                 if state.inspect_focus == 0 {
                     let count = PROTO_FILTERS.len();
 
@@ -1675,6 +1683,7 @@ fn handle_on_key(id: Option<i64>, params: &serde_json::Value) {
                 }
                 handled = true;
             } else if key == 261 || key == 'l' as i64 || key == 'L' as i64 {
+                state.last_dashboard_key_ms = t;
                 if state.inspect_focus == 0 {
                     let count = PROTO_FILTERS.len();
 
@@ -1691,15 +1700,18 @@ fn handle_on_key(id: Option<i64>, params: &serde_json::Value) {
                 }
                 handled = true;
             } else if key == 343 || key == 10 || key == 13 {
+                state.last_dashboard_key_ms = t;
                 state.show_dashboard = false;
                 apply = true;
                 handled = true;
             } else if key == 263 || key == 127 || key == 8 {
+                state.last_dashboard_key_ms = t;
                 if state.inspect_focus == 1 {
                     let _ = state.inspect_filter.pop();
                 }
                 handled = true;
             } else if key >= 32 && key <= 126 {
+                state.last_dashboard_key_ms = t;
                 let c = key as u8 as char;
                 if state.inspect_focus == 1 {
                     if state.inspect_filter.len() < 63 {
@@ -1769,6 +1781,7 @@ fn handle_on_key(id: Option<i64>, params: &serde_json::Value) {
             state.inspect_filter = state.filter_string.clone();
             state.inspect_show_raw = state.state_show_raw;
             state.inspect_body_mode = state.state_body_mode;
+            state.last_dashboard_key_ms = 0;
 
             state.inspect_proto_idx = PROTO_FILTERS.iter()
                 .position(|&p| p.eq_ignore_ascii_case(&state.filter_proto))

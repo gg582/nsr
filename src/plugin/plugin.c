@@ -9,7 +9,19 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
+
+#define NSR_PLUGIN_MODAL_KEY_INTERVAL_MS 120
+#define NSR_PLUGIN_KEY_WAIT_MS 50
+
+static long long now_ms(void)
+{
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+        return 0;
+    return (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
+}
 
 static void config_set_bool(const char *path, const char *key, bool value)
 {
@@ -131,6 +143,7 @@ static void plugin_stop(nsr_plugin_entry_t *e)
     e->pending_render_id = -1;
     e->pending_render_hops_id = -1;
     e->pending_on_key_id = -1;
+    e->last_on_key_ms = 0;
 }
 
 void nsr_plugins_cleanup(nsr_plugin_registry_t *reg)
@@ -673,10 +686,26 @@ static bool plugin_reserves_key(const nsr_plugin_entry_t *e, int ch)
 }
 
 static bool plugin_try_on_key(nsr_plugin_entry_t *e,
-                              const nsr_json_buf_t *params)
+                              const nsr_json_buf_t *params,
+                              bool modal_input)
 {
     while (plugin_drain_response(e, 0))
         ;
+
+    if (e->on_key_pending) {
+        plugin_drain_response(e, NSR_PLUGIN_KEY_WAIT_MS);
+        if (e->on_key_pending)
+            return modal_input;
+    }
+
+    if (modal_input) {
+        long long t = now_ms();
+        if (t > 0 && e->last_on_key_ms > 0 &&
+            t - e->last_on_key_ms < NSR_PLUGIN_MODAL_KEY_INTERVAL_MS) {
+            return true;
+        }
+        e->last_on_key_ms = t;
+    }
 
     nsr_json_buf_t resp;
     nsr_json_init(&resp);
@@ -756,7 +785,7 @@ static bool plugin_try_on_key(nsr_plugin_entry_t *e,
 
 bool nsr_plugins_on_key(nsr_plugin_registry_t *reg, int ch)
 {
-    if (!reg || ch < 0 || ch > 127)
+    if (!reg || ch < 0)
         return false;
 
     nsr_json_buf_t params;
@@ -778,7 +807,7 @@ bool nsr_plugins_on_key(nsr_plugin_registry_t *reg, int ch)
         
         // 핵심 수정: 렌더 캐시 의존 제거, 최신화된 호스트의 is_modal 상태 직접 활용
         if (e->is_modal) {
-            if (plugin_try_on_key(e, &params)) {
+            if (plugin_try_on_key(e, &params, true)) {
                 handled = true;
             }
         }
@@ -793,7 +822,7 @@ bool nsr_plugins_on_key(nsr_plugin_registry_t *reg, int ch)
         if (!plugin_reserves_key(e, ch))
             continue;
         targeted = true;
-        if (plugin_try_on_key(e, &params))
+        if (plugin_try_on_key(e, &params, false))
             handled = true;
     }
 
@@ -804,13 +833,26 @@ bool nsr_plugins_on_key(nsr_plugin_registry_t *reg, int ch)
             plugin_check_alive(e);
             if (!e->enabled || !e->initialized || e->dead)
                 continue;
-            if (plugin_try_on_key(e, &params))
+            if (plugin_try_on_key(e, &params, false))
                 handled = true;
         }
     }
 
     nsr_json_free(&params);
     return handled;
+}
+
+bool nsr_plugins_modal_active(nsr_plugin_registry_t *reg)
+{
+    if (!reg)
+        return false;
+    for (int i = 0; i < reg->count; i++) {
+        nsr_plugin_entry_t *e = &reg->entries[i];
+        plugin_check_alive(e);
+        if (e->enabled && e->initialized && !e->dead && e->is_modal)
+            return true;
+    }
+    return false;
 }
 
 int nsr_plugins_count(const nsr_plugin_registry_t *reg)
@@ -908,6 +950,11 @@ static bool plugin_mgr_on_key(nsr_plugin_manager_t *self, int ch)
     return nsr_plugins_on_key(&self->registry, ch);
 }
 
+static bool plugin_mgr_modal_active(nsr_plugin_manager_t *self)
+{
+    return nsr_plugins_modal_active(&self->registry);
+}
+
 static int plugin_mgr_count(const nsr_plugin_manager_t *self)
 {
     return nsr_plugins_count(&self->registry);
@@ -941,6 +988,7 @@ const struct nsr_plugin_manager_vtable nsr_plugin_manager_vtable = {
     .render = plugin_mgr_render,
     .render_hops = plugin_mgr_render_hops,
     .on_key = plugin_mgr_on_key,
+    .modal_active = plugin_mgr_modal_active,
     .count = plugin_mgr_count,
     .name = plugin_mgr_name,
     .description = plugin_mgr_description,
