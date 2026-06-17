@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <poll.h>
 #include <sys/wait.h>
+#include <time.h>
 
 bool nsr_json_rpc_spawn(nsr_json_rpc_t *rpc, const char *path)
 {
@@ -150,7 +151,20 @@ bool nsr_json_rpc_send_request(nsr_json_rpc_t *rpc,
 static bool recv_line(nsr_json_rpc_t *rpc, nsr_json_buf_t *buf, int timeout_ms)
 {
     struct pollfd pfd = { .fd = rpc->out, .events = POLLIN };
-    int remaining = timeout_ms;
+    struct timespec deadline;
+    bool has_deadline = false;
+
+    if (timeout_ms >= 0) {
+        if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0)
+            return false;
+        deadline.tv_sec += timeout_ms / 1000;
+        deadline.tv_nsec += (timeout_ms % 1000) * 1000000LL;
+        if (deadline.tv_nsec >= 1000000000LL) {
+            deadline.tv_sec++;
+            deadline.tv_nsec -= 1000000000LL;
+        }
+        has_deadline = true;
+    }
 
     while (1) {
         if (rpc->rx_buf.len > 0) {
@@ -168,9 +182,17 @@ static bool recv_line(nsr_json_rpc_t *rpc, nsr_json_buf_t *buf, int timeout_ms)
             }
         }
 
-        int poll_timeout = remaining > 50 ? 50 : remaining;
-        if (remaining < 0)
-            poll_timeout = 50;
+        int poll_timeout = 50;
+        if (has_deadline) {
+            struct timespec now;
+            if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+                return false;
+            long long left = ((long long)deadline.tv_sec - (long long)now.tv_sec) * 1000LL +
+                             ((long long)deadline.tv_nsec - (long long)now.tv_nsec) / 1000000LL;
+            if (left <= 0)
+                return false;
+            poll_timeout = left > 50 ? 50 : (int)left;
+        }
 
         int rc = poll(&pfd, 1, poll_timeout);
         if (rc < 0) {
@@ -180,9 +202,15 @@ static bool recv_line(nsr_json_rpc_t *rpc, nsr_json_buf_t *buf, int timeout_ms)
             return false;
         }
         if (rc == 0) {
-            remaining -= poll_timeout;
-            if (remaining <= 0 && timeout_ms >= 0)
-                return false;
+            if (has_deadline) {
+                struct timespec now;
+                if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+                    return false;
+                if ((long long)now.tv_sec > (long long)deadline.tv_sec ||
+                    ((long long)now.tv_sec == (long long)deadline.tv_sec &&
+                     (long long)now.tv_nsec >= (long long)deadline.tv_nsec))
+                    return false;
+            }
             /* Check if child died. */
             int status;
             if (waitpid(rpc->pid, &status, WNOHANG) != 0) {
@@ -205,9 +233,6 @@ static bool recv_line(nsr_json_rpc_t *rpc, nsr_json_buf_t *buf, int timeout_ms)
             return false;
         }
         nsr_json_append_raw(&rpc->rx_buf, tmp, (size_t)n);
-        remaining -= poll_timeout;
-        if (remaining <= 0 && timeout_ms >= 0)
-            return false;
     }
 }
 

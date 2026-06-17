@@ -14,6 +14,7 @@
 
 #define NSR_PLUGIN_MODAL_KEY_INTERVAL_MS 120
 #define NSR_PLUGIN_KEY_WAIT_MS 50
+#define NSR_PLUGIN_KEY_COALESCE_MS 40
 
 static void build_key_params(nsr_json_buf_t *params, int ch, bool modal_input)
 {
@@ -34,6 +35,39 @@ static long long now_ms(void)
     if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
         return 0;
     return (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
+}
+
+static void plugin_key_queue_reset(nsr_plugin_entry_t *e)
+{
+    e->key_queue_head = 0;
+    e->key_queue_count = 0;
+    e->last_key_ch = -1;
+    e->last_key_ms = 0;
+}
+
+static bool plugin_key_queue_enqueue(nsr_plugin_entry_t *e, int ch, bool modal_input)
+{
+    if (e->key_queue_count >= NSR_PLUGIN_KEY_QUEUE)
+        return false;
+    int idx = (e->key_queue_head + e->key_queue_count) % NSR_PLUGIN_KEY_QUEUE;
+    e->key_queue[idx].ch = ch;
+    e->key_queue[idx].modal_input = modal_input;
+    e->key_queue_count++;
+    return true;
+}
+
+static bool plugin_key_queue_dequeue(nsr_plugin_entry_t *e, int *ch_out, bool *modal_out)
+{
+    if (e->key_queue_count <= 0)
+        return false;
+    nsr_key_event_t *ev = &e->key_queue[e->key_queue_head];
+    if (ch_out)
+        *ch_out = ev->ch;
+    if (modal_out)
+        *modal_out = ev->modal_input;
+    e->key_queue_head = (e->key_queue_head + 1) % NSR_PLUGIN_KEY_QUEUE;
+    e->key_queue_count--;
+    return true;
 }
 
 static void config_set_bool(const char *path, const char *key, bool value)
@@ -157,6 +191,9 @@ static void plugin_stop(nsr_plugin_entry_t *e)
     e->pending_render_hops_id = -1;
     e->pending_on_key_id = -1;
     e->last_on_key_ms = 0;
+    plugin_key_queue_reset(e);
+    e->pending_open_editor = false;
+    e->pending_open_editor_file[0] = '\0';
 }
 
 void nsr_plugins_cleanup(nsr_plugin_registry_t *reg)
@@ -281,6 +318,7 @@ int nsr_plugins_load_dir(nsr_plugin_registry_t *reg, const char *dir)
 
         nsr_plugin_entry_t *e = &reg->entries[reg->count++];
         memset(e, 0, sizeof(*e));
+        e->last_key_ch = -1;
         strncpy(e->name, ent->d_name, sizeof(e->name) - 1);
         strncpy(e->path, path, sizeof(e->path) - 1);
 
@@ -430,6 +468,9 @@ static void plugin_force_sync(nsr_plugin_entry_t *e)
     e->pending_render_hops_id = -1;
     e->pending_on_key_id = -1;
     e->last_on_key_ms = 0;
+    plugin_key_queue_reset(e);
+    e->pending_open_editor = false;
+    e->pending_open_editor_file[0] = '\0';
 
     nsr_json_free(&e->last_render_resp);
     nsr_json_init(&e->last_render_resp);
@@ -483,6 +524,94 @@ static bool plugin_result_requests_force_sync(nsr_plugin_entry_t *e,
     return true;
 }
 
+static void plugin_send_next_key(nsr_plugin_entry_t *e)
+{
+    if (e->on_key_pending || e->rpc.dead || e->rpc.in < 0)
+        return;
+
+    int ch;
+    bool modal_input;
+    if (!plugin_key_queue_dequeue(e, &ch, &modal_input))
+        return;
+
+    nsr_json_buf_t params;
+    build_key_params(&params, ch, modal_input);
+    long long id = -1;
+    if (nsr_json_rpc_send_request(&e->rpc, "on_key", &params, &id)) {
+        e->on_key_pending = true;
+        e->pending_on_key_id = id;
+    } else if (e->rpc.dead) {
+        e->dead = true;
+    }
+    nsr_json_free(&params);
+}
+
+static void plugin_run_open_editor(const char *file)
+{
+    if (!file || !file[0])
+        return;
+
+    def_prog_mode();
+    endwin();
+
+    char cmd[512];
+    const char *editor = getenv("EDITOR");
+    if (!editor || !editor[0])
+        editor = "nano";
+    snprintf(cmd, sizeof(cmd), "%s %s", editor, file);
+    int ret = system(cmd);
+    (void)ret;
+
+    reset_prog_mode();
+    refresh();
+}
+
+/* Process the result object of an on_key response.  Host-side actions such as
+ * open_editor are only flagged here; they are executed later during input
+ * handling so rendering is never interrupted by endwin/refresh. */
+static bool plugin_handle_on_key_result(nsr_plugin_entry_t *e, const char *result)
+{
+    size_t len;
+
+    if (plugin_result_requests_force_sync(e, result))
+        return true;
+
+    const char *mv = nsr_json_obj_get(result, "is_modal", &len);
+    if (mv)
+        nsr_json_parse_bool(mv, len, &e->is_modal);
+
+    const char *act_val = nsr_json_obj_get(result, "action", &len);
+    char action_buf[64] = "";
+    if (act_val)
+        nsr_json_parse_str(act_val, len, action_buf, sizeof(action_buf));
+    if (strcmp(action_buf, "open_editor") == 0) {
+        char file_buf[256] = "";
+        const char *file_val = nsr_json_obj_get(result, "file", &len);
+        if (file_val)
+            nsr_json_parse_str(file_val, len, file_buf, sizeof(file_buf));
+        if (file_buf[0]) {
+            strncpy(e->pending_open_editor_file, file_buf,
+                    sizeof(e->pending_open_editor_file) - 1);
+            e->pending_open_editor_file[sizeof(e->pending_open_editor_file) - 1] = '\0';
+            e->pending_open_editor = true;
+        }
+        return true;
+    }
+
+    const char *hv = nsr_json_obj_get(result, "handled", &len);
+    bool h = false;
+    if (hv && nsr_json_parse_bool(hv, len, &h) && h) {
+        nsr_json_free(&e->last_render_resp);
+        nsr_json_init(&e->last_render_resp);
+        e->last_key_ch = -1;
+        e->last_key_ms = 0;
+        return true;
+    }
+    e->last_key_ch = -1;
+    e->last_key_ms = 0;
+    return false;
+}
+
 static bool plugin_drain_response(nsr_plugin_entry_t *e, int timeout_ms)
 {
     if (e->rpc.dead || e->rpc.out < 0)
@@ -498,6 +627,7 @@ static bool plugin_drain_response(nsr_plugin_entry_t *e, int timeout_ms)
 
     if (plugin_handle_force_sync(e, &resp)) {
         nsr_json_free(&resp);
+        plugin_send_next_key(e);
         return true;
     }
 
@@ -505,37 +635,28 @@ static bool plugin_drain_response(nsr_plugin_entry_t *e, int timeout_ms)
         nsr_json_free(&e->last_render_resp);
         e->last_render_resp = resp;
         e->render_pending = false;
+        plugin_send_next_key(e);
         return true;
     }
     if (e->render_hops_pending && id == e->pending_render_hops_id) {
         nsr_json_free(&e->last_render_hops_resp);
         e->last_render_hops_resp = resp;
         e->render_hops_pending = false;
+        plugin_send_next_key(e);
         return true;
     }
     if (e->on_key_pending && id == e->pending_on_key_id) {
         e->on_key_pending = false;
         size_t len;
         const char *result = nsr_json_obj_get(nsr_json_cstr(&resp), "result", &len);
-        if (result) {
-            if (plugin_result_requests_force_sync(e, result)) {
-                nsr_json_free(&resp);
-                return true;
-            }
-            const char *mv = nsr_json_obj_get(result, "is_modal", &len);
-            if (mv)
-                nsr_json_parse_bool(mv, len, &e->is_modal);
-            const char *hv = nsr_json_obj_get(result, "handled", &len);
-            bool handled = false;
-            if (hv && nsr_json_parse_bool(hv, len, &handled) && handled) {
-                nsr_json_free(&e->last_render_resp);
-                nsr_json_init(&e->last_render_resp);
-            }
-        }
+        if (result)
+            plugin_handle_on_key_result(e, result);
         nsr_json_free(&resp);
+        plugin_send_next_key(e);
         return true;
     }
     nsr_json_free(&resp);
+    plugin_send_next_key(e);
     return true;
 }
 
@@ -787,17 +908,12 @@ static bool plugin_reserves_key(const nsr_plugin_entry_t *e, int ch)
 }
 
 static bool plugin_try_on_key(nsr_plugin_entry_t *e,
-                              const nsr_json_buf_t *params,
-                              bool modal_input)
+                              int ch,
+                              bool modal_input,
+                              bool reserved)
 {
     while (plugin_drain_response(e, 0))
         ;
-
-    if (e->on_key_pending) {
-        plugin_drain_response(e, NSR_PLUGIN_KEY_WAIT_MS);
-        if (e->on_key_pending)
-            return modal_input;
-    }
 
     if (modal_input) {
         long long t = now_ms();
@@ -808,99 +924,30 @@ static bool plugin_try_on_key(nsr_plugin_entry_t *e,
         e->last_on_key_ms = t;
     }
 
-    nsr_json_buf_t resp;
-    nsr_json_init(&resp);
-    if (!nsr_json_rpc_send_request(&e->rpc, "on_key", params,
-                                   &e->pending_on_key_id)) {
-        nsr_json_free(&resp);
-        if (e->rpc.dead)
-            e->dead = true;
-        return false;
+    /* Coalesce rapid identical keys to avoid flooding the plugin. */
+    long long t = now_ms();
+    if (ch == e->last_key_ch && t > 0 && e->last_key_ms > 0 &&
+        t - e->last_key_ms < NSR_PLUGIN_KEY_COALESCE_MS) {
+        return modal_input || reserved;
     }
-    e->on_key_pending = true;
+    e->last_key_ch = ch;
+    e->last_key_ms = t;
 
-    long long id = -1;
-    bool got = nsr_json_rpc_try_recv_any(&e->rpc, 10, &resp, &id);
-    if (got && plugin_handle_force_sync(e, &resp)) {
-        nsr_json_free(&resp);
-        return true;
+    if (!plugin_key_queue_enqueue(e, ch, modal_input)) {
+        /* Queue full: drop oldest event to make room. */
+        int drop_ch;
+        bool drop_modal;
+        plugin_key_queue_dequeue(e, &drop_ch, &drop_modal);
+        (void)drop_ch;
+        (void)drop_modal;
+        plugin_key_queue_enqueue(e, ch, modal_input);
     }
-    if (got && e->render_pending && id == e->pending_render_id) {
-        nsr_json_free(&e->last_render_resp);
-        e->last_render_resp = resp;
-        e->render_pending = false;
-        return false;
-    }
-    if (got && e->render_hops_pending && id == e->pending_render_hops_id) {
-        nsr_json_free(&e->last_render_hops_resp);
-        e->last_render_hops_resp = resp;
-        e->render_hops_pending = false;
-        return false;
-    }
-    if (got && id == e->pending_on_key_id) {
-        e->on_key_pending = false;
-        size_t len;
-        const char *result = nsr_json_obj_get(nsr_json_cstr(&resp), "result", &len);
-        if (result) {
-            if (plugin_result_requests_force_sync(e, result)) {
-                nsr_json_free(&resp);
-                return true;
-            }
 
-            const char *mv = nsr_json_obj_get(result, "is_modal", &len);
-            if (mv) {
-                nsr_json_parse_bool(mv, len, &e->is_modal);
-            }
+    plugin_send_next_key(e);
 
-            const char *act_val = nsr_json_obj_get(result, "action", &len);
-            char action_buf[64] = "";
-            if (act_val) {
-                nsr_json_parse_str(act_val, len, action_buf, sizeof(action_buf));
-            }
-            if (strcmp(action_buf, "open_editor") == 0) {
-                char file_buf[256] = "";
-                const char *file_val = nsr_json_obj_get(result, "file", &len);
-                if (file_val) {
-                    nsr_json_parse_str(file_val, len, file_buf, sizeof(file_buf));
-                }
-                if (file_buf[0]) {
-                    def_prog_mode();
-                    endwin();
-
-                    char cmd[512];
-                    const char *editor = getenv("EDITOR");
-                    if (!editor || !editor[0]) {
-                        editor = "nano";
-                    }
-                    snprintf(cmd, sizeof(cmd), "%s %s", editor, file_buf);
-                    int ret = system(cmd);
-                    (void)ret;
-
-                    reset_prog_mode();
-                    refresh();
-                }
-                nsr_json_free(&resp);
-                return true;
-            }
-
-            const char *hv = nsr_json_obj_get(result, "handled", &len);
-            bool h = false;
-            if (hv && nsr_json_parse_bool(hv, len, &h) && h) {
-                nsr_json_free(&resp);
-                nsr_json_free(&e->last_render_resp);
-                nsr_json_init(&e->last_render_resp);
-                return true;
-            }
-        }
-        nsr_json_free(&resp);
-    } else {
-        nsr_json_free(&resp);
-        if (e->rpc.dead) {
-            e->dead = true;
-            e->on_key_pending = false;
-        }
-    }
-    return false;
+    /* For modal input and reserved keys, consume the event immediately:
+     * the plugin owns these keys and NSR should not act on them. */
+    return modal_input || reserved;
 }
 
 bool nsr_plugins_on_key(nsr_plugin_registry_t *reg, int ch)
@@ -911,20 +958,35 @@ bool nsr_plugins_on_key(nsr_plugin_registry_t *reg, int ch)
     bool handled = false;
     bool targeted = false;
 
+    /* Drain any pending responses before handling this key.  This also executes
+     * deferred host-side actions requested by previous on_key responses. */
+    for (int i = 0; i < reg->count; i++) {
+        nsr_plugin_entry_t *e = &reg->entries[i];
+        plugin_check_alive(e);
+        if (!e->enabled || !e->initialized || e->dead)
+            continue;
+        while (plugin_drain_response(e, 0))
+            ;
+        if (e->pending_open_editor) {
+            e->pending_open_editor = false;
+            plugin_run_open_editor(e->pending_open_editor_file);
+            e->pending_open_editor_file[0] = '\0';
+            /* A deferred editor action counts as handled so NSR does not also
+             * process the key that triggered it. */
+            handled = true;
+        }
+    }
+
     /* Zero pass: if a plugin is currently modal, it gets priority for ALL keys. */
     for (int i = 0; i < reg->count && !handled; i++) {
         nsr_plugin_entry_t *e = &reg->entries[i];
         plugin_check_alive(e);
         if (!e->enabled || !e->initialized || e->dead)
             continue;
-        
+
         if (e->is_modal) {
-            nsr_json_buf_t params;
-            build_key_params(&params, ch, true);
-            if (plugin_try_on_key(e, &params, true)) {
+            if (plugin_try_on_key(e, ch, true, false))
                 handled = true;
-            }
-            nsr_json_free(&params);
         }
     }
 
@@ -937,11 +999,8 @@ bool nsr_plugins_on_key(nsr_plugin_registry_t *reg, int ch)
         if (!plugin_reserves_key(e, ch))
             continue;
         targeted = true;
-        nsr_json_buf_t params;
-        build_key_params(&params, ch, false);
-        if (plugin_try_on_key(e, &params, false))
+        if (plugin_try_on_key(e, ch, false, true))
             handled = true;
-        nsr_json_free(&params);
     }
 
     /* Second pass: generic on_key broadcast for unreserved keys. */
@@ -951,11 +1010,8 @@ bool nsr_plugins_on_key(nsr_plugin_registry_t *reg, int ch)
             plugin_check_alive(e);
             if (!e->enabled || !e->initialized || e->dead)
                 continue;
-            nsr_json_buf_t params;
-            build_key_params(&params, ch, false);
-            if (plugin_try_on_key(e, &params, false))
+            if (plugin_try_on_key(e, ch, false, false))
                 handled = true;
-            nsr_json_free(&params);
         }
     }
 

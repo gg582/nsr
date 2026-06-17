@@ -9,6 +9,12 @@
 #define NSR_MAX_PLUGINS 32
 #define NSR_PLUGIN_NAME_MAX 64
 #define NSR_KEY_USER_LEN 32
+#define NSR_PLUGIN_KEY_QUEUE 8
+
+typedef struct {
+    int ch;
+    bool modal_input;
+} nsr_key_event_t;
 
 /* Forward declaration to break the ui <-> plugin include cycle. */
 struct nsr_tui_state;
@@ -36,6 +42,21 @@ typedef struct {
     /* Keys this plugin reserved at init time (lowercase, sorted). */
     char reserved_keys[NSR_KEY_USER_LEN];
     int reserved_count;
+
+    /* Asynchronous key event queue.  Rapid key presses are enqueued here
+     * instead of blocking the TUI waiting for each plugin response. */
+    nsr_key_event_t key_queue[NSR_PLUGIN_KEY_QUEUE];
+    int key_queue_head;
+    int key_queue_count;
+
+    /* Coalesce rapid identical keys to avoid flooding a plugin. */
+    int last_key_ch;
+    long long last_key_ms;
+
+    /* Host-side action requested by an on_key response.  Deferred until the
+     * next input-handling cycle so it never runs during rendering. */
+    bool pending_open_editor;
+    char pending_open_editor_file[256];
 
     /* Relaunch / crash monitoring */
     bool crash_countdown_active;

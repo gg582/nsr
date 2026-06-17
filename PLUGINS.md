@@ -143,7 +143,7 @@ Response:
 {"jsonrpc":"2.0","id":4,"result":{"handled":true}}
 ```
 
-Return `handled:false` to let NSR process the key.
+`handled` tells NSR whether the plugin considers the key consumed. For keys the plugin reserves at `init` time, or when the plugin is currently modal, NSR always routes the key only to that plugin and does not apply any built-in NSR shortcut. For unreserved generic keys, NSR processes the key itself in parallel with notifying the plugin; to consume a key and block NSR's default action, reserve it via `reserved_keys` in the `init` response.
 
 ## Example Python plugin
 
@@ -182,6 +182,6 @@ for line in sys.stdin:
 * Plugins must read from `stdin` and write to `stdout`. All writes must be flushed immediately.
 * `init` is still a synchronous call with a 2000 ms timeout.
 * `render` / `render_hops` are handled asynchronously: NSR draws the previous frame's cached response immediately, polls for the current response with a 20 ms budget, and then issues a new request for the next frame. Slow plugins no longer block the TUI.
-* `on_key` is sent with a tight 10 ms response budget; if the plugin does not answer in time NSR treats the key as unhandled and processes it normally.
+* `on_key` is dispatched asynchronously. NSR maintains a small per-plugin key-event queue so rapid key presses (including holding down a single key) do not block the TUI or tangle the IPC stream. Reserved and modal keys are consumed immediately by NSR and delivered to the plugin in order; generic unreserved keys are processed by NSR immediately and also forwarded to the plugin.
 * `update_telemetry` is a notification; NSR does not wait for a response.
 * If a plugin process exits, NSR marks it dead and will not restart it until re-enabled.
