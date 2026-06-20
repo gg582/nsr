@@ -405,7 +405,7 @@ static void render_normal(nsr_tui_state_t *tui, nsr_telemetry_state_t *state,
         attron(A_BOLD);
         mvprintw(y + 2, x + 2, "Tracer Settings:");
         attroff(A_BOLD);
-        mvprintw(y + 4, x + 2, "[+/-] Minimum Round Duration (-i): %d ms", state->interval_ms);
+        mvprintw(y + 4, x + 2, "[j/k] Minimum Round Duration (-i): %d ms", state->interval_ms);
         mvprintw(y + 6, x + 2, "Press [%c] to close", tui->keys.vt->label_char(&tui->keys, 'd'));
     }
 
@@ -960,10 +960,12 @@ int nsr_tui_update(nsr_tui_state_t *tui, nsr_topology_state_t *topo,
             tui->show_stats = !tui->show_stats;
             return 3;
         }
-        if (ch == '+' || ch == '=')
-            return 4;
-        if (ch == '-' || ch == '_')
-            return 5;
+        if (tui->show_dashboard) {
+            if (ch == 'k')
+                return 4;
+            if (ch == 'j')
+                return 5;
+        }
     }
     return 0;
 }
