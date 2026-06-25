@@ -349,7 +349,6 @@ void nsr_plugins_update_telemetry(nsr_plugin_registry_t *reg,
                                   const nsr_telemetry_state_t *tel,
                                   const nsr_topology_state_t *topo)
 {
-    (void)topo;
     if (!reg)
         return;
 
@@ -364,10 +363,20 @@ void nsr_plugins_update_telemetry(nsr_plugin_registry_t *reg,
     nsr_json_int(&params, tel->interval_ms);
     nsr_json_key(&params, "hops");
     nsr_json_arr_start(&params);
+
+    char added_ips[256][48];
+    int added_count = 0;
+
     for (int i = 1; i < NSR_MAX_HOPS; i++) {
         const nsr_hop_info_t *h = &tel->hops[i];
         if (h->sent == 0)
             continue;
+
+        if (added_count < 256) {
+            strncpy(added_ips[added_count++], h->addr, 47);
+            added_ips[added_count - 1][47] = '\0';
+        }
+
         nsr_json_obj_start(&params);
         nsr_json_key(&params, "hop_idx");
         nsr_json_int(&params, i);
@@ -391,6 +400,47 @@ void nsr_plugins_update_telemetry(nsr_plugin_registry_t *reg,
         }
         nsr_json_obj_end(&params);
     }
+
+    if (topo) {
+        for (int i = 0; i < NSR_TOPOLOGY_MAX_NODES; i++) {
+            const nsr_topology_node_t *n = &topo->nodes[i];
+            if (!n->active || !n->addr[0])
+                continue;
+
+            bool exists = false;
+            for (int j = 0; j < added_count; j++) {
+                if (strcmp(added_ips[j], n->addr) == 0) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (exists)
+                continue;
+
+            if (added_count < 256) {
+                strncpy(added_ips[added_count++], n->addr, 47);
+                added_ips[added_count - 1][47] = '\0';
+            }
+
+            nsr_json_obj_start(&params);
+            nsr_json_key(&params, "hop_idx");
+            nsr_json_int(&params, -1);
+            nsr_json_key(&params, "addr");
+            nsr_json_string(&params, n->addr);
+            nsr_json_key(&params, "rtt_us");
+            nsr_json_int(&params, (long long)n->health.rtt_us);
+            nsr_json_key(&params, "sent");
+            nsr_json_int(&params, n->health.sent > 0 ? n->health.sent : 1);
+            nsr_json_key(&params, "recv");
+            nsr_json_int(&params, n->health.recv);
+            nsr_json_key(&params, "loss");
+            nsr_json_double(&params, n->health.sent ? 1.0 - (double)n->health.recv / n->health.sent : 0.0);
+            nsr_json_key(&params, "status");
+            nsr_json_string(&params, "reply");
+            nsr_json_obj_end(&params);
+        }
+    }
+
     nsr_json_arr_end(&params);
     nsr_json_obj_end(&params);
 

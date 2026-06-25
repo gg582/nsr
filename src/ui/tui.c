@@ -547,6 +547,58 @@ static void render_tree(nsr_tui_state_t *tui, nsr_topology_state_t *topo,
         }
     }
 
+    nsr_hop_info_t temp_hops[NSR_MAX_HOPS];
+    memset(temp_hops, 0, sizeof(temp_hops));
+    int temp_hop_count = 1;
+
+    int sim_line_idx = 0;
+    for (int t = 0; t < target_count; t++) {
+        sim_line_idx++;
+
+        nsr_topology_node_t *tnodes[NSR_TOPOLOGY_MAX_NODES];
+        int tnode_count = 0;
+        for (int i = 0; i < NSR_TOPOLOGY_MAX_NODES; i++) {
+            nsr_topology_node_t *n = &topo->nodes[i];
+            if (n->active && strcmp(n->target_ip, targets[t]) == 0) {
+                tnodes[tnode_count++] = n;
+            }
+        }
+        if (tnode_count == 0) continue;
+
+        for (int i = 1; i < tnode_count; i++) {
+            nsr_topology_node_t *key = tnodes[i];
+            int j = i - 1;
+            while (j >= 0 && tnodes[j]->ttl > key->ttl) {
+                tnodes[j + 1] = tnodes[j];
+                j--;
+            }
+            tnodes[j + 1] = key;
+        }
+
+        for (int i = 0; i < tnode_count; i++) {
+            if (sim_line_idx >= tui->tree_scroll && sim_line_idx < tui->tree_scroll + avail_rows) {
+                if (temp_hop_count < NSR_MAX_HOPS) {
+                    nsr_hop_info_t *th = &temp_hops[temp_hop_count];
+                    strncpy(th->addr, tnodes[i]->addr, sizeof(th->addr) - 1);
+                    th->addr[sizeof(th->addr) - 1] = '\0';
+                    th->rtt_us = (uint64_t)tnodes[i]->health.rtt_us;
+                    th->sent = tnodes[i]->health.sent > 0 ? tnodes[i]->health.sent : 1;
+                    th->recv = tnodes[i]->health.recv;
+                    th->last_status = NSR_OBS_REPLY;
+                    temp_hop_count++;
+                }
+            }
+            sim_line_idx++;
+        }
+    }
+
+    nsr_hop_annotation_t annotations[NSR_MAX_HOPS];
+    int ann_count = 0;
+    if (plugins && temp_hop_count > 1) {
+        ann_count = plugins->vt->render_hops(plugins, temp_hops, temp_hop_count,
+                                             annotations, NSR_MAX_HOPS);
+    }
+
     int line_idx = 0;
     int cursor_idx = 0;
 
@@ -622,11 +674,21 @@ static void render_tree(nsr_tui_state_t *tui, nsr_topology_state_t *topo,
                     int remain = max_x - start_x - prefix_len - 2;
                     if (remain < 10) remain = 10;
 
-                    char label[128];
+                    char label[256];
                     snprintf(label, sizeof(label), "%c%s%s  rtt:%4.1fms loss:%3.0f%%",
                              cp_mark, dest_mark, tnodes[i]->addr,
                              tnodes[i]->health.rtt_us / 1000.0f,
                              tnodes[i]->health.loss_rate * 100.0f);
+
+                    for (int a = 0; a < ann_count; a++) {
+                        int h_idx = annotations[a].hop_idx;
+                        if (h_idx > 0 && h_idx < temp_hop_count && strcmp(temp_hops[h_idx].addr, tnodes[i]->addr) == 0) {
+                            size_t cur_len = strlen(label);
+                            snprintf(label + cur_len, sizeof(label) - cur_len, "  %s", annotations[a].text);
+                            break;
+                        }
+                    }
+
                     if ((int)strlen(label) > remain)
                         label[remain] = '\0';
 

@@ -1,4 +1,4 @@
-SUBDIRS = geoip percentile sniffer
+SUBDIRS = geoip percentile sniffer sparkline
 
 all:
 	@for d in $(SUBDIRS); do $(MAKE) -C $$d; done

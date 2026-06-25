@@ -55,7 +55,10 @@ BENCH_E2E_TARGET = nsr_bench_e2e
 TTAK_DIR = lib/libttak
 TTAK_LIB = $(TTAK_DIR)/lib/libttak.a
 
-all: $(TARGET) $(BENCH_TARGET) $(BENCH_E2E_TARGET)
+all: $(TARGET) $(BENCH_TARGET) $(BENCH_E2E_TARGET) nsr-plugged-build
+
+nsr-plugged-build:
+	$(MAKE) -C nsr-plugged
 
 $(TTAK_LIB):
 	$(MAKE) -C $(TTAK_DIR) USE_CUDA=0
@@ -75,8 +78,11 @@ $(BENCH_E2E_TARGET): bench_nsr_e2e.c \
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-install:
+install: nsr-plugged-install plugins-install
 	cp $(TARGET) /usr/local/bin/nsr
+
+nsr-plugged-install:
+	$(MAKE) -C nsr-plugged install
 
 plugins-install:
 	$(MAKE) -C plugins install
@@ -84,6 +90,7 @@ plugins-install:
 clean:
 	rm -f src/*.o *.o plugins/*/*.o $(TARGET) $(BENCH_TARGET) $(BENCH_E2E_TARGET)
 	$(MAKE) -C plugins clean
+	$(MAKE) -C nsr-plugged clean
 	$(MAKE) -C $(TTAK_DIR) clean
 
-.PHONY: all clean install plugins-install
+.PHONY: all clean install plugins-install nsr-plugged-build nsr-plugged-install
