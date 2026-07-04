@@ -113,7 +113,7 @@ static bool resolve_target(const char *arg, int family, char *out_ip, size_t out
     hints.ai_family = family;
     hints.ai_socktype = SOCK_RAW;
 
-    if (getaddrinfo(arg, NULL, &hints, &res) != 0)
+    if (getaddrinfo(arg, nullptr, &hints, &res) != 0)
         return false;
 
     if (res->ai_family == AF_INET) {
@@ -144,7 +144,7 @@ int main(int argc, char **argv)
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "i:s46h", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "i:s46h", long_options, nullptr)) != -1) {
         switch (opt) {
         case 'i':
             interval_ms = atoi(optarg);
@@ -200,12 +200,12 @@ int main(int argc, char **argv)
         sess->active = true;
 
         size_t shm_size = sizeof(nsr_shm_ring_t);
-        sess->l2g = mmap(NULL, shm_size, PROT_READ | PROT_WRITE,
+        sess->l2g = mmap(nullptr, shm_size, PROT_READ | PROT_WRITE,
                          MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-        sess->g2l = mmap(NULL, shm_size, PROT_READ | PROT_WRITE,
+        sess->g2l = mmap(nullptr, shm_size, PROT_READ | PROT_WRITE,
                          MAP_SHARED | MAP_ANONYMOUS, -1, 0);
         size_t shm_large_size = sizeof(nsr_shm_ring_large_t);
-        sess->l2t = mmap(NULL, shm_large_size, PROT_READ | PROT_WRITE,
+        sess->l2t = mmap(nullptr, shm_large_size, PROT_READ | PROT_WRITE,
                          MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
         if (sess->l2g == MAP_FAILED || sess->g2l == MAP_FAILED || sess->l2t == MAP_FAILED) {
@@ -223,7 +223,7 @@ int main(int argc, char **argv)
         if (sess->logic_pid == 0) {
             signal(SIGINT, SIG_DFL);
             signal(SIGTERM, SIG_DFL);
-            nsr_config_t *config = mmap(NULL, sizeof(nsr_config_t), PROT_READ | PROT_WRITE,
+            nsr_config_t *config = mmap(nullptr, sizeof(nsr_config_t), PROT_READ | PROT_WRITE,
                                         MAP_SHARED | MAP_ANONYMOUS, -1, 0);
             atomic_init(&config->interval_ms, interval_ms);
             strncpy(config->target_ip, sess->target_ip, sizeof(config->target_ip) - 1);
@@ -297,7 +297,7 @@ int main(int argc, char **argv)
                         if (sess->logic_pid == 0) {
                             signal(SIGINT, SIG_DFL);
                             signal(SIGTERM, SIG_DFL);
-                            nsr_config_t *config = mmap(NULL, sizeof(nsr_config_t), PROT_READ | PROT_WRITE,
+                            nsr_config_t *config = mmap(nullptr, sizeof(nsr_config_t), PROT_READ | PROT_WRITE,
                                                         MAP_SHARED | MAP_ANONYMOUS, -1, 0);
                             atomic_init(&config->interval_ms, interval_ms);
                             strncpy(config->target_ip, sess->target_ip, sizeof(config->target_ip) - 1);
@@ -355,7 +355,7 @@ int main(int argc, char **argv)
         }
 
         struct timespec ts = {0, 16666666};
-        nanosleep(&ts, NULL);
+        nanosleep(&ts, nullptr);
     }
 
     if (!silent)
@@ -371,9 +371,9 @@ int main(int argc, char **argv)
     for (int s = 0; s < g_num_sessions; s++) {
         nsr_session_t *sess = &g_sessions[s];
         if (sess->gk_pid > 0)
-            waitpid(sess->gk_pid, NULL, 0);
+            waitpid(sess->gk_pid, nullptr, 0);
         if (sess->logic_pid > 0)
-            waitpid(sess->logic_pid, NULL, 0);
+            waitpid(sess->logic_pid, nullptr, 0);
     }
 
     g_plugin_mgr.vt->cleanup(&g_plugin_mgr);

@@ -300,7 +300,7 @@ void nsr_gatekeeper_run(nsr_shm_ring_t *l2g, nsr_shm_ring_t *g2l, const char *ta
         while (1) {
             for (int i = 0; i < BATCH_SIZE; i++)
                 rmsgs[i].msg_hdr.msg_namelen = sizeof(struct sockaddr_storage);
-            int rcount = recvmmsg(fd, rmsgs, BATCH_SIZE, MSG_DONTWAIT, NULL);
+            int rcount = recvmmsg(fd, rmsgs, BATCH_SIZE, MSG_DONTWAIT, nullptr);
             if (rcount <= 0)
                 break;
 

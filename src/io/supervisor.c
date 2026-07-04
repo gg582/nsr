@@ -24,7 +24,7 @@ void nsr_worker_tracer(nsr_cap_t cap, const char *target)
 
                     nsr_state_update_hop(cap, ttl, &local_hop);
 
-                    ttak_mem_block_t *pkt = ttak_mem_alloc(NULL, sizeof(ttak_icmp_v4_hdr_t));
+                    ttak_mem_block_t *pkt = ttak_mem_alloc(nullptr, sizeof(ttak_icmp_v4_hdr_t));
                     (void)pkt;
                     (void)net;
                 }

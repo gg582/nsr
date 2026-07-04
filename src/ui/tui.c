@@ -178,12 +178,12 @@ static void show_tui_msg(nsr_tui_state_t *tui, const char *text, int seconds)
 {
     strncpy(tui->msg, text, sizeof(tui->msg) - 1);
     tui->msg[sizeof(tui->msg) - 1] = '\0';
-    tui->msg_until = time(NULL) + seconds;
+    tui->msg_until = time(nullptr) + seconds;
 }
 
 static void draw_notice(nsr_tui_state_t *tui, int max_y, int max_x)
 {
-    if (tui->msg[0] == '\0' || time(NULL) >= tui->msg_until) {
+    if (tui->msg[0] == '\0' || time(nullptr) >= tui->msg_until) {
         tui->msg[0] = '\0';
         return;
     }
@@ -201,7 +201,7 @@ static void draw_notice(nsr_tui_state_t *tui, int max_y, int max_x)
 
     for (int i = 0; i < h; i++)
         mvhline(y + i, x, ' ', w);
-    draw_box(y, x, h, w, NULL);
+    draw_box(y, x, h, w, nullptr);
     attron(A_BOLD);
     mvprintw(y + 1, x + 2, "%.*s", w - 4, tui->msg);
     attroff(A_BOLD);
@@ -242,7 +242,7 @@ static nsr_topology_node_t *node_by_visual_index(nsr_topology_state_t *topo, int
             return n;
         idx++;
     }
-    return NULL;
+    return nullptr;
 }
 
 static nsr_topology_node_t *g_tree_nodes[NSR_TOPOLOGY_MAX_NODES];
@@ -251,7 +251,7 @@ static int g_tree_node_count = 0;
 static nsr_topology_node_t *tree_node_by_index(int index)
 {
     if (index < 0 || index >= g_tree_node_count)
-        return NULL;
+        return nullptr;
     return g_tree_nodes[index];
 }
 
@@ -304,7 +304,7 @@ static void render_normal(nsr_tui_state_t *tui, nsr_telemetry_state_t *state,
         ttak_bigint_init(bi_diff, now_ns);
         ttak_bigint_init(bi_uptime, now_ns);
         ttak_bigint_sub(bi_diff, bi_now, bi_start, now_ns);
-        ttak_bigint_div_u64(bi_uptime, NULL, bi_diff, 1000000ULL, now_ns);
+        ttak_bigint_div_u64(bi_uptime, nullptr, bi_diff, 1000000ULL, now_ns);
         char *uptime_str = ttak_bigint_to_string(bi_uptime, now_ns);
         if (uptime_str) {
             mvprintw(0, max_x - 45, "INTERVAL: %d ms  UPTIME: %s s",

@@ -326,7 +326,7 @@ static void handle_render(const char *params, long long id)
     nsr_json_arr_start(&resp);
 
     int y = 1;
-    emit_window_stats(&resp, "RTT Statistics (Global)", &y, 1, true, NULL);
+    emit_window_stats(&resp, "RTT Statistics (Global)", &y, 1, true, nullptr);
 
     if (focus_addr[0]) {
         y++;
@@ -368,7 +368,7 @@ int main(void)
     memset(&g_samples, 0, sizeof(g_samples));
     memset(&g_buckets, 0, sizeof(g_buckets));
 
-    char *line = NULL;
+    char *line = nullptr;
     size_t cap = 0;
     while (getline(&line, &cap, stdin) != -1) {
         size_t len = strlen(line);

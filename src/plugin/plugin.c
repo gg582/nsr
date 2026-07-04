@@ -175,7 +175,7 @@ void nsr_plugins_init(nsr_plugin_registry_t *reg, const char *config_path)
 static void plugin_stop(nsr_plugin_entry_t *e)
 {
     if (e->rpc.pid > 0) {
-        nsr_json_rpc_notify(&e->rpc, "cleanup", NULL);
+        nsr_json_rpc_notify(&e->rpc, "cleanup", nullptr);
         nsr_json_rpc_close(&e->rpc);
     }
     nsr_json_free(&e->last_render_resp);
@@ -295,7 +295,7 @@ int nsr_plugins_load_dir(nsr_plugin_registry_t *reg, const char *dir)
 
     int loaded = 0;
     struct dirent *ent;
-    while ((ent = readdir(d)) != NULL) {
+    while ((ent = readdir(d)) != nullptr) {
         if (ent->d_name[0] == '.')
             continue;
 
@@ -815,7 +815,7 @@ void nsr_plugins_render(nsr_plugin_registry_t *reg,
             nsr_json_int(&params, (long long)tui->focused_node_id);
             nsr_json_key(&params, "focused_addr");
             if (topo && tui->focused_node_id) {
-                const char *addr = NULL;
+                const char *addr = nullptr;
                 for (int i = 0; i < NSR_TOPOLOGY_MAX_NODES; i++) {
                     if (topo->nodes[i].active && topo->nodes[i].id == tui->focused_node_id) {
                         addr = topo->nodes[i].addr;
@@ -1089,14 +1089,14 @@ int nsr_plugins_count(const nsr_plugin_registry_t *reg)
 const char *nsr_plugins_name(const nsr_plugin_registry_t *reg, int idx)
 {
     if (!reg || idx < 0 || idx >= reg->count)
-        return NULL;
+        return nullptr;
     return reg->entries[idx].name;
 }
 
 const char *nsr_plugins_description(const nsr_plugin_registry_t *reg, int idx)
 {
     if (!reg || idx < 0 || idx >= reg->count)
-        return NULL;
+        return nullptr;
     return reg->entries[idx].description[0] ? reg->entries[idx].description : reg->entries[idx].name;
 }
 

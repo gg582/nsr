@@ -46,9 +46,9 @@ static geo_entry_t *geo_cache_find(const char *ip)
         if (e->valid && strcmp(e->ip, ip) == 0)
             return e;
         if (!e->valid)
-            return NULL;
+            return nullptr;
     }
-    return NULL;
+    return nullptr;
 }
 
 static void geo_cache_store(const char *ip, const char *country, const char *provider)
@@ -335,7 +335,7 @@ int main(void)
     memset(&g_state, 0, sizeof(g_state));
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
-    char *line = NULL;
+    char *line = nullptr;
     size_t cap = 0;
     while (getline(&line, &cap, stdin) != -1) {
         size_t len = strlen(line);

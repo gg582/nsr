@@ -178,7 +178,7 @@ static const char *skip_ws(const char *p)
 static const char *skip_str(const char *p)
 {
     if (*p != '"')
-        return NULL;
+        return nullptr;
     p++;
     while (*p) {
         if (*p == '\\' && p[1]) {
@@ -190,7 +190,7 @@ static const char *skip_str(const char *p)
             p++;
         }
     }
-    return NULL;
+    return nullptr;
 }
 
 static const char *skip_value(const char *p)
@@ -206,17 +206,17 @@ static const char *skip_value(const char *p)
                 return p + 1;
             if (*p == '"') {
                 p = skip_str(p);
-                if (!p) return NULL;
+                if (!p) return nullptr;
                 p = skip_ws(p);
                 if (*p == ':') p++;
                 p = skip_value(p);
-                if (!p) return NULL;
+                if (!p) return nullptr;
                 p = skip_ws(p);
                 if (*p == ',') { p++; continue; }
                 if (*p == '}') return p + 1;
-                return NULL;
+                return nullptr;
             }
-            return NULL;
+            return nullptr;
         }
     } else if (*p == '[') {
         p++;
@@ -225,11 +225,11 @@ static const char *skip_value(const char *p)
             if (*p == ']')
                 return p + 1;
             p = skip_value(p);
-            if (!p) return NULL;
+            if (!p) return nullptr;
             p = skip_ws(p);
             if (*p == ',') { p++; continue; }
             if (*p == ']') return p + 1;
-            return NULL;
+            return nullptr;
         }
     } else {
         while (*p && *p != ',' && *p != '}' && *p != ']')
@@ -242,30 +242,30 @@ const char *nsr_json_obj_get(const char *json, const char *key, size_t *out_len)
 {
     const char *p = skip_ws(json);
     if (*p != '{')
-        return NULL;
+        return nullptr;
     p++;
     while (1) {
         p = skip_ws(p);
         if (*p == '}')
-            return NULL;
+            return nullptr;
         if (*p != '"')
-            return NULL;
+            return nullptr;
         const char *key_start = p + 1;
         const char *key_end = skip_str(p);
         if (!key_end)
-            return NULL;
+            return nullptr;
         size_t key_len = (size_t)(key_end - key_start - 1);
         bool match = (strlen(key) == key_len && strncmp(key_start, key, key_len) == 0);
 
         p = skip_ws(key_end);
         if (*p != ':')
-            return NULL;
+            return nullptr;
         p++;
         p = skip_ws(p);
         const char *val_start = p;
         p = skip_value(p);
         if (!p)
-            return NULL;
+            return nullptr;
         const char *val_end = p;
 
         if (match) {
@@ -279,8 +279,8 @@ const char *nsr_json_obj_get(const char *json, const char *key, size_t *out_len)
             continue;
         }
         if (*p == '}')
-            return NULL;
-        return NULL;
+            return nullptr;
+        return nullptr;
     }
 }
 
@@ -359,17 +359,17 @@ const char *nsr_json_arr_first(const char *json, const char **next)
 {
     const char *p = skip_ws(json);
     if (*p != '[')
-        return NULL;
+        return nullptr;
     p++;
     p = skip_ws(p);
     if (*p == ']') {
         *next = p + 1;
-        return NULL;
+        return nullptr;
     }
     const char *elem = p;
     p = skip_value(p);
     if (!p)
-        return NULL;
+        return nullptr;
     *next = p;
     return elem;
 }
@@ -383,13 +383,13 @@ const char *nsr_json_arr_next(const char *next, const char **new_next)
         const char *elem = p;
         p = skip_value(p);
         if (!p)
-            return NULL;
+            return nullptr;
         *new_next = p;
         return elem;
     }
     if (*p == ']') {
         *new_next = p + 1;
-        return NULL;
+        return nullptr;
     }
-    return NULL;
+    return nullptr;
 }

@@ -61,6 +61,6 @@ void nsr_singular_broker_main(const char *target) {
         }
 
         struct timespec ts = {0, 100000000}; // 100ms pacing
-        nanosleep(&ts, NULL);
+        nanosleep(&ts, nullptr);
     }
 }

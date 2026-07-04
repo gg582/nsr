@@ -74,10 +74,10 @@ int main(int argc, char **argv)
 
     size_t shm_size = sizeof(nsr_shm_ring_t);
     size_t shm_large_size = sizeof(nsr_shm_ring_large_t);
-    nsr_shm_ring_t *l2g = mmap(NULL, shm_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    nsr_shm_ring_t *g2l = mmap(NULL, shm_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    nsr_shm_ring_large_t *l2t = mmap(NULL, shm_large_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    nsr_config_t *config = mmap(NULL, sizeof(nsr_config_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    nsr_shm_ring_t *l2g = mmap(nullptr, shm_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    nsr_shm_ring_t *g2l = mmap(nullptr, shm_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    nsr_shm_ring_large_t *l2t = mmap(nullptr, shm_large_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    nsr_config_t *config = mmap(nullptr, sizeof(nsr_config_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
     if (l2g == MAP_FAILED || g2l == MAP_FAILED || l2t == MAP_FAILED || config == MAP_FAILED) {
         perror("mmap");
@@ -110,8 +110,8 @@ int main(int argc, char **argv)
     clock_gettime(CLOCK_MONOTONIC, &end_ts);
     kill(g_gk_pid, SIGTERM);
     kill(g_logic_pid, SIGTERM);
-    waitpid(g_gk_pid, NULL, 0);
-    waitpid(g_logic_pid, NULL, 0);
+    waitpid(g_gk_pid, nullptr, 0);
+    waitpid(g_logic_pid, nullptr, 0);
 
     uint32_t total_sent = 0;
     uint32_t total_recv = 0;

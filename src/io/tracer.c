@@ -60,7 +60,7 @@ void nsr_logic_tick(void *user_ctx, void *args) {
         ttak_abstract_write(h->abs_mem, 0, &data, sizeof(data));
 
         // Network transmission...
-        ttak_mem_block_t *block = ttak_mem_alloc(NULL, sizeof(ttak_icmp_v4_hdr_t));
+        ttak_mem_block_t *block = ttak_mem_alloc(nullptr, sizeof(ttak_icmp_v4_hdr_t));
         ttak_icmp_v4_hdr_t *icmp = (ttak_icmp_v4_hdr_t *)block->ptr;
         icmp->type = TTAK_ICMP_ECHO_REQUEST;
         icmp->sequence = data.seq;

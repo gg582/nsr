@@ -42,7 +42,7 @@ bool nsr_json_rpc_spawn(nsr_json_rpc_t *rpc, const char *path)
         dup2(out_pipe[1], STDERR_FILENO);
         close(in_pipe[0]);
         close(out_pipe[1]);
-        execl(path, path, (char *)NULL);
+        execl(path, path, (char *)nullptr);
         _exit(127);
     }
 
@@ -68,7 +68,7 @@ void nsr_json_rpc_close(nsr_json_rpc_t *rpc)
     }
     if (rpc->pid > 0) {
         kill(rpc->pid, SIGTERM);
-        waitpid(rpc->pid, NULL, 0);
+        waitpid(rpc->pid, nullptr, 0);
         rpc->pid = 0;
     }
     nsr_json_free(&rpc->rx_buf);
@@ -361,7 +361,7 @@ bool nsr_json_rpc_call(nsr_json_rpc_t *rpc,
                        int timeout_ms,
                        nsr_json_buf_t *response_out)
 {
-    if (!nsr_json_rpc_send_request(rpc, method, params, NULL))
+    if (!nsr_json_rpc_send_request(rpc, method, params, nullptr))
         return false;
     return nsr_json_rpc_try_recv_response(rpc, timeout_ms, response_out);
 }

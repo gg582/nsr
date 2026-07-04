@@ -20,7 +20,7 @@ nsr_topology_node_t *nsr_topology_find_by_addr_and_target(nsr_topology_state_t *
         if (n->active && strcmp(n->addr, addr) == 0 && strcmp(n->target_ip, target_ip) == 0)
             return n;
     }
-    return NULL;
+    return nullptr;
 }
 
 uint32_t nsr_topology_upsert_node(nsr_topology_state_t *topo,
@@ -89,7 +89,7 @@ static nsr_topology_node_t *node_by_id(nsr_topology_state_t *topo, uint32_t id)
         if (topo->nodes[i].active && topo->nodes[i].id == id)
             return &topo->nodes[i];
     }
-    return NULL;
+    return nullptr;
 }
 
 static void update_node_health(nsr_topology_node_t *node, const nsr_hop_info_t *h,

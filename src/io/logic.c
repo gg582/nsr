@@ -251,10 +251,10 @@ void nsr_logic_run(nsr_shm_ring_t *g2l, nsr_shm_ring_t *l2g,
             last_probe_us = now_us;
         } else if (g_paused) {
             struct timespec ts = {0, 10000000};
-            nanosleep(&ts, NULL);
+            nanosleep(&ts, nullptr);
         } else {
             struct timespec ts = {0, 1000000};
-            nanosleep(&ts, NULL);
+            nanosleep(&ts, nullptr);
         }
 
         while (1) {
